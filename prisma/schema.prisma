@@ -1,0 +1,616 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model users {
+  id                   String    @id @default(uuid()) @db.Uuid
+  email                String?   @unique
+  google_id            String?   @unique
+  username             String    @unique @db.VarChar(50)
+  date_of_birth        DateTime? @db.Date
+  onboarding_completed Boolean   @default(false)
+  last_login_at        DateTime?
+  last_seen_at         DateTime?
+  created_at           DateTime?
+  updated_at           DateTime?
+
+  user_sessions          user_sessions[]
+  refresh_tokens         refresh_tokens[]
+  user_app_opens         user_app_opens[]
+  activities             activities[]
+  user_books             user_books[]
+  user_setups            user_setups[]
+  user_social_links      user_social_links[]
+  user_companions        user_companions[]
+  user_avatars           user_avatars[]
+  user_avatar_history    user_avatar_history[]
+  user_activities        user_activities[]
+  user_streaks           user_streaks[]
+  user_achievements      user_achievements[]
+  notifications          notifications[]
+  user_insights          user_insights[]
+  posts                  posts[]
+  post_likes             post_likes[]
+  relapses               relapses[]
+  points_ledger          points_ledger[]
+  help_events            help_events[]
+  support_tickets        support_tickets[]
+  journals                         journals[]
+  user_companion_messages          user_companion_messages[]
+  user_notification_devices        user_notification_devices[]
+  notification_jobs                notification_jobs[]
+  user_profile_edits               user_profile_edits[]
+}
+
+model refresh_tokens {
+  id         String    @id @default(uuid()) @db.Uuid
+
+  user_id    String    @db.Uuid
+
+  token_hash String
+
+  expires_at DateTime
+  revoked_at DateTime?
+
+  created_at DateTime  @default(now())
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([token_hash])
+}
+
+model user_app_opens {
+  id         String   @id @default(uuid()) @db.Uuid
+
+  user_id    String   @db.Uuid
+
+  opened_at  DateTime @default(now())
+
+  created_at DateTime @default(now())
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([opened_at])
+}
+
+model user_sessions {
+  id          String   @id @default(uuid()) @db.Uuid
+  user_id     String   @db.Uuid
+  device_info String?
+  ip_address  String?
+  created_at  DateTime
+
+  user users @relation(fields: [user_id], references: [id])
+}
+
+model activities {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String?   @db.Uuid
+  name       String
+  section    String
+  created_at DateTime?
+  updated_at DateTime?
+
+  user                   users?                  @relation(fields: [user_id], references: [id])
+  user_setup_activities  user_setup_activities[]
+  user_activities        user_activities[]
+
+  @@unique([user_id, name, section])
+}
+
+model books_catalog {
+  id                  String    @id @default(uuid()) @db.Uuid
+  title               String
+  author              String?
+  default_total_pages Int?
+  created_at          DateTime?
+
+  user_books user_books[]
+}
+
+model user_books {
+  id              String    @id @default(uuid()) @db.Uuid
+  user_id         String    @db.Uuid
+  book_catalog_id String?   @db.Uuid
+  title           String
+  total_pages     Int
+  current_page    Int?      @default(0)
+  is_completed    Boolean?  @default(false)
+  completed_at    DateTime?
+  ai_summary      String?   @db.Text
+  created_at      DateTime?
+  updated_at      DateTime?
+
+  user           users          @relation(fields: [user_id], references: [id])
+  books_catalog  books_catalog? @relation(fields: [book_catalog_id], references: [id])
+
+  user_setup_books user_setup_books[]
+  user_activities  user_activities[]
+}
+
+model user_setups {
+  id             String    @id @default(uuid()) @db.Uuid
+  user_id        String    @db.Uuid
+  section        String
+  is_active      Boolean   @default(true)
+  rest_days      Json?
+  preferred_time DateTime? @db.Time()
+  created_at     DateTime?
+  updated_at     DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  user_setup_activities user_setup_activities[]
+  user_setup_books      user_setup_books[]
+
+  @@unique([user_id, section])
+}
+
+model user_setup_activities {
+  id            String    @id @default(uuid()) @db.Uuid
+  user_setup_id String    @db.Uuid
+  activity_id   String    @db.Uuid
+  is_primary    Boolean?  @default(false)
+  created_at    DateTime?
+
+  user_setup user_setups @relation(fields: [user_setup_id], references: [id])
+  activity   activities  @relation(fields: [activity_id], references: [id])
+}
+
+model user_setup_books {
+  id            String    @id @default(uuid()) @db.Uuid
+  user_setup_id String    @db.Uuid
+  user_book_id  String    @db.Uuid
+  created_at    DateTime?
+
+  user_setup user_setups @relation(fields: [user_setup_id], references: [id])
+  user_book  user_books  @relation(fields: [user_book_id], references: [id])
+}
+
+model user_social_links {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String    @db.Uuid
+  platform   String
+  url        String
+  created_at DateTime?
+  updated_at DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, platform])
+}
+
+model companions {
+  id               String    @id @default(uuid()) @db.Uuid
+  name             String
+  slug             String    @unique
+  description      String?
+  image_url        String?
+  created_at       DateTime? @default(now())
+
+  user_companions user_companions[]
+}
+
+model user_companions {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  companion_id String    @db.Uuid
+  selected_at  DateTime?
+  is_active    Boolean?  @default(true)
+  created_at   DateTime?
+
+  user      users      @relation(fields: [user_id], references: [id])
+  companion companions @relation(fields: [companion_id], references: [id])
+}
+
+model avatars {
+  id                  String    @id @default(uuid()) @db.Uuid
+  name                String
+  slug                String    @unique
+  title               String?
+  full_body_image_url String?
+  profile_image_url   String?
+  story               String?   @db.Text
+  unlock_category     String?
+  unlock_requirement  Json?
+  revoke_requirement  Json?
+  is_default          Boolean   @default(false)
+  created_at          DateTime?
+
+  user_avatars        user_avatars[]
+  user_avatar_history user_avatar_history[]
+}
+
+model user_avatars {
+  id           String    @id @default(uuid()) @db.Uuid
+
+  user_id      String    @db.Uuid
+  avatar_id    String    @db.Uuid
+
+  is_unlocked  Boolean   @default(false)
+  is_selected  Boolean   @default(false)
+
+  unlocked_at  DateTime?
+  revoked_at   DateTime?
+
+  unlock_count Int       @default(0)
+
+  last_reason  String?
+
+  created_at   DateTime?
+  updated_at   DateTime?
+
+  user   users   @relation(fields: [user_id], references: [id])
+  avatar avatars @relation(fields: [avatar_id], references: [id])
+
+  @@unique([user_id, avatar_id])
+}
+
+model user_avatar_history {
+  id         String    @id @default(uuid()) @db.Uuid
+
+  user_id    String    @db.Uuid
+  avatar_id  String    @db.Uuid
+
+  event_type String
+  reason     String?
+  metadata   Json?
+
+  created_at DateTime? @default(now())
+
+  user   users   @relation(fields: [user_id], references: [id])
+  avatar avatars @relation(fields: [avatar_id], references: [id])
+
+  @@index([user_id, avatar_id])
+}
+
+model user_activities {
+  id               String    @id @default(uuid()) @db.Uuid
+
+  user_id          String    @db.Uuid
+  section          String
+
+  activity_id      String?   @db.Uuid
+  user_book_id     String?   @db.Uuid
+
+  date             DateTime  @db.Date
+
+  did_user_do      Boolean?
+
+  hours            Decimal?
+
+  relapse_count    Int?
+
+  description      String?   @db.Text
+  reason_if_no     String?   @db.Text
+
+  created_at       DateTime?
+  updated_at       DateTime?
+
+  user      users       @relation(fields: [user_id], references: [id])
+  activity  activities? @relation(fields: [activity_id], references: [id])
+  user_book user_books? @relation(fields: [user_book_id], references: [id])
+
+  activity_images activity_images[]
+  posts           posts[]
+
+  @@unique([user_id, section, date, activity_id, user_book_id])
+  @@index([user_id, section, date])
+  @@index([user_id, did_user_do, date])
+}
+
+model activity_images {
+  id              String    @id @default(uuid()) @db.Uuid
+  activity_log_id String    @db.Uuid
+  image_url       String
+  created_at      DateTime?
+
+  user_activity user_activities @relation(fields: [activity_log_id], references: [id])
+}
+
+model user_streaks {
+  id                 String    @id @default(uuid()) @db.Uuid
+
+  user_id            String    @db.Uuid
+  section            String
+
+  current_streak     Int       @default(0)
+  longest_streak     Int       @default(0)
+
+  current_start_date DateTime?
+  last_activity_date DateTime?
+
+  longest_start_date DateTime?
+  longest_end_date   DateTime?
+
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, section])
+}
+
+model achievements {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  description String?   @db.Text
+  section     String?
+  icon_url    String?
+  condition   Json?
+  created_at  DateTime?
+
+  user_achievements user_achievements[]
+}
+
+model user_achievements {
+  id             String    @id @default(uuid()) @db.Uuid
+  user_id        String    @db.Uuid
+  achievement_id String    @db.Uuid
+  is_unlocked    Boolean?  @default(false)
+  unlocked_at    DateTime?
+  created_at     DateTime?
+
+  user        users        @relation(fields: [user_id], references: [id])
+  achievement achievements @relation(fields: [achievement_id], references: [id])
+
+  @@unique([user_id, achievement_id])
+}
+
+model notifications {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  type         String
+  title        String?
+  message      String?   @db.Text
+  reference_id String?   @db.Uuid
+  is_read      Boolean?  @default(false)
+  created_at   DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+}
+
+model user_insights {
+  id             String    @id @default(uuid()) @db.Uuid
+  user_id        String    @db.Uuid
+  type           String
+  insight_text   String    @db.Text
+  context        Json?
+  reference_date DateTime? @db.Date
+  created_at     DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+}
+
+model posts {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  content     String?   @db.Text
+  activity_id String?   @db.Uuid
+  created_at  DateTime?
+
+  user          users            @relation(fields: [user_id], references: [id])
+  user_activity user_activities? @relation(fields: [activity_id], references: [id])
+
+  post_images   post_images[]
+  post_likes    post_likes[]
+  post_hashtags post_hashtags[]
+}
+
+model post_images {
+  id         String    @id @default(uuid()) @db.Uuid
+  post_id    String    @db.Uuid
+  image_url  String
+  created_at DateTime?
+
+  post posts @relation(fields: [post_id], references: [id])
+}
+
+model post_likes {
+  id         String    @id @default(uuid()) @db.Uuid
+  user_id    String    @db.Uuid
+  post_id    String    @db.Uuid
+  created_at DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+  post posts @relation(fields: [post_id], references: [id])
+
+  @@unique([user_id, post_id])
+}
+
+model post_hashtags {
+  id         String    @id @default(uuid()) @db.Uuid
+  post_id    String    @db.Uuid
+  tag        String
+  created_at DateTime?
+
+  post posts @relation(fields: [post_id], references: [id])
+}
+
+model relapses {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  occurred_at DateTime
+  reason      String?
+  description String?   @db.Text
+  created_at  DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+}
+
+model points_ledger {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  points       Int
+  section      String
+  source       String
+  reference_id String?   @db.Uuid
+  metadata     Json?
+  created_at   DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id, created_at])
+  @@index([user_id, section])
+  @@index([reference_id])
+  @@index([section, created_at])
+}
+
+model help_events {
+  id           String    @id @default(uuid()) @db.Uuid
+  user_id      String    @db.Uuid
+  triggered_at DateTime?
+  created_at   DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+}
+
+model support_tickets {
+  id          String    @id @default(uuid()) @db.Uuid
+  user_id     String    @db.Uuid
+  issue_type  String
+  title       String?
+  description String    @db.Text
+  status      String?   @default("open")
+  created_at  DateTime?
+  updated_at  DateTime?
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+
+  support_ticket_images support_ticket_images[]
+}
+
+model support_ticket_images {
+  id         String    @id @default(uuid()) @db.Uuid
+  ticket_id  String    @db.Uuid
+  image_url  String
+  created_at DateTime?
+
+  support_ticket support_tickets @relation(fields: [ticket_id], references: [id])
+}
+
+model journals {
+  id               String    @id @default(uuid()) @db.Uuid
+
+  user_id          String    @db.Uuid
+  date             DateTime  @db.Date
+
+  mood             Int?
+
+  win_of_the_day   String?   @db.Text
+  lesson_learned   String?   @db.Text
+  tomorrow_mission String?   @db.Text
+
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, date])
+}
+
+model user_companion_messages {
+  id          String  @id @default(uuid()) @db.Uuid
+
+  user_id     String  @db.Uuid
+
+  type           String
+
+  companion_name String
+
+  title       String
+  message     String
+
+  entity_type String?
+  entity_id   String? @db.Uuid
+
+  action      String?
+
+  metadata    Json?
+
+  is_read     Boolean  @default(false)
+
+  created_at  DateTime @default(now())
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([type])
+  @@index([created_at])
+  @@index([entity_type, entity_id])
+}
+
+model user_notification_devices {
+  id              String   @id @default(uuid()) @db.Uuid
+
+  user_id         String   @db.Uuid
+
+  expo_push_token String
+
+  device_id       String?
+  platform        String?
+
+  is_active       Boolean  @default(true)
+
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@unique([expo_push_token])
+}
+
+model user_profile_edits {
+  id            String   @id @default(uuid()) @db.Uuid
+
+  user_id       String   @db.Uuid
+
+  edited_fields Json?
+
+  created_at    DateTime @default(now())
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+}
+
+model notification_jobs {
+  id           String    @id @default(uuid()) @db.Uuid
+
+  user_id      String    @db.Uuid
+
+  type         String
+
+  title        String
+  body         String
+
+  payload      Json?
+
+  status       String
+
+  scheduled_at DateTime?
+  sent_at      DateTime?
+
+  created_at   DateTime  @default(now())
+
+  user users @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@index([status])
+}
