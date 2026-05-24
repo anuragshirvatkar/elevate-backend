@@ -77,6 +77,35 @@ export class SetupController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('mind')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get Mind setup',
+    description: 'Returns Mind setup configuration with books. Returns empty structure if not configured.',
+  })
+  @ApiOkResponse({ description: 'Mind setup data' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  getMindSetup(@CurrentUser() user: { userId: string }) {
+    return this.setupService.getMindSetup(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Put('mind')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Edit Mind setup',
+    description: 'Updates Mind setup configuration with books. Replaces entire book list. Validates book ownership.',
+  })
+  @ApiBody({ type: EditMindSetupDto })
+  @ApiOkResponse({ description: 'Updated Mind setup data' })
+  @ApiBadRequestResponse({ description: 'Invalid books or ownership' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  editMindSetup(@CurrentUser() user: { userId: string }, @Body() dto: EditMindSetupDto) {
+    return this.setupService.editMindSetup(user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get(':section')
   @ApiBearerAuth()
   @ApiOperation({
@@ -104,34 +133,5 @@ export class SetupController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   editSetup(@CurrentUser() user: { userId: string }, @Param('section') section: string, @Body() dto: EditSetupDto) {
     return this.setupService.editSetup(user.userId, section, dto);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get('mind')
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Get Mind setup',
-    description: 'Returns Mind setup configuration with books. Returns empty structure if not configured.',
-  })
-  @ApiOkResponse({ description: 'Mind setup data' })
-  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
-  getMindSetup(@CurrentUser() user: { userId: string }) {
-    return this.setupService.getMindSetup(user.userId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Put('mind')
-  @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
-  @ApiOperation({
-    summary: 'Edit Mind setup',
-    description: 'Updates Mind setup configuration with books. Replaces entire book list. Validates book ownership.',
-  })
-  @ApiBody({ type: EditMindSetupDto })
-  @ApiOkResponse({ description: 'Updated Mind setup data' })
-  @ApiBadRequestResponse({ description: 'Invalid books or ownership' })
-  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
-  editMindSetup(@CurrentUser() user: { userId: string }, @Body() dto: EditMindSetupDto) {
-    return this.setupService.editMindSetup(user.userId, dto);
   }
 }

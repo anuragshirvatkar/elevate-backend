@@ -16,6 +16,13 @@ export class ActivityLogsService {
     const endDate = new Date(dates[dates.length - 1]);
     endDate.setUTCHours(23, 59, 59, 999);
 
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { created_at: true },
+    });
+
+    const userCreatedAt = user?.created_at ? user.created_at.toISOString().slice(0, 10) : null;
+
     const rows = await this.prisma.user_activities.findMany({
       where: {
         user_id: userId,
@@ -47,25 +54,38 @@ export class ActivityLogsService {
 
     this.logger.log(`Last 7 days fetched: userId=${userId}`);
 
+    const isBeforeCreation = (date: string): boolean => {
+      if (!userCreatedAt) return false;
+      return date < userCreatedAt;
+    };
+
     const result: Record<string, unknown> = {
       power: dates.map((d) => ({
         date: d,
-        didUserDo: bySection.get('power')?.get(d)?.did_user_do ?? false,
+        didUserDo: isBeforeCreation(d)
+          ? null
+          : bySection.get('power')?.get(d)?.did_user_do ?? false,
       })),
       craft: dates.map((d) => ({
         date: d,
-        didUserDo: bySection.get('craft')?.get(d)?.did_user_do ?? false,
+        didUserDo: isBeforeCreation(d)
+          ? null
+          : bySection.get('craft')?.get(d)?.did_user_do ?? false,
       })),
       purity: dates.map((d) => ({
         date: d,
-        didUserRelapse: (bySection.get('purity')?.get(d)?.relapse_count ?? 0) > 0,
+        didUserRelapse: isBeforeCreation(d)
+          ? null
+          : (bySection.get('purity')?.get(d)?.relapse_count ?? 0) > 0,
       })),
     };
 
     if (mindActive) {
       result.mind = dates.map((d) => ({
         date: d,
-        didUserDo: bySection.get('mind')?.get(d)?.did_user_do ?? false,
+        didUserDo: isBeforeCreation(d)
+          ? null
+          : bySection.get('mind')?.get(d)?.did_user_do ?? false,
       }));
     } else {
       result.mind = { isActive: false };

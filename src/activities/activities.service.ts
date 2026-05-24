@@ -10,6 +10,7 @@ import { ActivityLogEntryDto } from './dto/activity-log-entry.dto';
 
 const CUSTOM_SECTIONS = ['power', 'craft'] as const;
 const LOG_SECTIONS = ['power', 'craft', 'mind', 'purity'] as const;
+const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
 @Injectable()
 export class ActivitiesService {
@@ -217,11 +218,85 @@ export class ActivitiesService {
       `Activity log upserted: userId=${userId} activityLogId=${record.id} date=${dto.date} operation=${operation}`,
     );
 
+    const activity = await this.prisma.user_activities.findUnique({
+      where: { id: record.id },
+      select: {
+        did_user_do: true,
+        hours: true,
+        relapse_count: true,
+        description: true,
+        date: true,
+      },
+    });
+
+    const setup = await this.prisma.user_setups.findFirst({
+      where: { user_id: userId, section: dto.section },
+      select: { rest_days: true },
+    });
+
+    const points = this.calculatePoints({
+      section: dto.section,
+      didUserDo: activity?.did_user_do ?? null,
+      relapseCount: activity?.relapse_count ?? null,
+      hours: activity?.hours != null ? Number(activity.hours) : null,
+      hasDescription: !!(activity?.description && activity.description.trim()),
+      date: activity?.date ?? activityDate,
+      restDays: Array.isArray(setup?.rest_days) ? (setup.rest_days as string[]) : [],
+    });
+
     return {
       success: true,
       message: 'Activity logged successfully',
       activityLogId: record.id,
+      points,
     };
+  }
+
+  private calculatePoints(params: {
+    section: string;
+    didUserDo: boolean | null;
+    relapseCount: number | null;
+    hours: number | null;
+    hasDescription: boolean;
+    date: Date;
+    restDays: string[];
+  }): number {
+    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays } = params;
+
+    const dayName = DAY_NAMES[date.getDay()];
+    const isRestDay = restDays.includes(dayName);
+
+    switch (section) {
+      case 'power':
+      case 'mind': {
+        if (!didUserDo) return 0;
+        let pts = 10;
+        if (hasDescription) pts += 2;
+        if (isRestDay) pts += 15;
+        return pts;
+      }
+
+      case 'craft': {
+        if (!didUserDo) return 0;
+        let pts = 10;
+        if (hours != null && hours > 2) {
+          const extraHours = Math.floor(hours - 2);
+          pts += extraHours * 2;
+        }
+        if (hasDescription) pts += 2;
+        if (isRestDay) pts += 15;
+        return pts;
+      }
+
+      case 'purity': {
+        const count = relapseCount ?? 0;
+        if (count === 0) return 10;
+        return -(20 * count);
+      }
+
+      default:
+        return 0;
+    }
   }
 
   async getActivityLogs(
