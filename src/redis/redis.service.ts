@@ -7,11 +7,8 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client: Redis;
 
   constructor(private configService: ConfigService) {
-    this.client = new Redis({
-      host: this.configService.get<string>('REDIS_HOST', 'localhost'),
-      port: this.configService.get<number>('REDIS_PORT', 6379),
-      lazyConnect: true,
-    });
+    const redisUrl = this.configService.getOrThrow<string>('REDIS_URL');
+    this.client = new Redis(redisUrl, { lazyConnect: true });
   }
 
   private readonly logger = new Logger(RedisService.name);
