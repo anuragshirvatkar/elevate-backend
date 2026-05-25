@@ -37,7 +37,8 @@ export class SupportService {
         throw new BadRequestException({ success: false, message: 'Maximum file size is 10MB' });
       }
 
-      const result = await this.cloudinaryService.uploadFile(file.path, 'support');
+      const base64 = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
+      const result = await this.cloudinaryService.uploadFile(base64, 'support');
       urls.push(result.secure_url);
     }
 
