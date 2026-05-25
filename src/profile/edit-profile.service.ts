@@ -100,11 +100,28 @@ export class EditProfileService {
           });
           prevCompanionName = prevActive?.companion.name ?? null;
 
-          const target = await tx.user_companions.findFirst({
+          let target = await tx.user_companions.findFirst({
             where: { user_id: userId, companion_id: dto.companionId },
             include: { companion: { select: { name: true } } },
           });
-          if (!target) throw new NotFoundException('Companion not found for this user');
+
+          if (!target) {
+            const companion = await tx.companions.findUnique({
+              where: { id: dto.companionId },
+              select: { name: true },
+            });
+            if (!companion) throw new NotFoundException('Companion not found');
+
+            target = await tx.user_companions.create({
+              data: {
+                user_id: userId,
+                companion_id: dto.companionId,
+                is_active: false,
+                selected_at: new Date(),
+              },
+              include: { companion: { select: { name: true } } },
+            });
+          }
           newCmpName = target.companion.name;
 
           await tx.user_companions.updateMany({
@@ -187,5 +204,48 @@ export class EditProfileService {
     this.logger.log(`Profile edited: userId=${userId} fields=[${updatedFields.join(',')}]`);
 
     return { success: true, updatedFields };
+  }
+
+  async softDelete(userId: string): Promise<{ success: boolean; message: string }> {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, username: true, deleted_at: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.deleted_at) {
+      throw new BadRequestException('Account is already deleted');
+    }
+
+    const deletedEmail = `deleted_${userId}@deleted.com`;
+    const deletedUsername = `deleted_${userId.slice(0, 8)}`;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.users.update({
+        where: { id: userId },
+        data: {
+          deleted_at: new Date(),
+          email: deletedEmail,
+          username: deletedUsername,
+          google_id: null,
+          onboarding_completed: false,
+        },
+      });
+
+      await tx.refresh_tokens.updateMany({
+        where: { user_id: userId },
+        data: { revoked_at: new Date() },
+      });
+    });
+
+    this.logger.log(`Account soft deleted: userId=${userId}`);
+
+    return {
+      success: true,
+      message: 'Your account has been deleted. You can recover it within 30 days by contacting support.',
+    };
   }
 }

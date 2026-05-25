@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Put, Query, UseGuards } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -61,5 +61,16 @@ export class ProfileController {
     @Body() dto: EditProfileDto,
   ) {
     return this.editProfileService.editProfile(user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete()
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Delete user account (soft delete)' })
+  @ApiOkResponse({ description: '{ success: true, message: string }' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async deleteAccount(@CurrentUser() user: { userId: string }) {
+    return this.editProfileService.softDelete(user.userId);
   }
 }

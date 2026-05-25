@@ -17,6 +17,7 @@ model users {
   last_seen_at         DateTime?
   created_at           DateTime?
   updated_at           DateTime?
+  deleted_at           DateTime?
 
   user_sessions          user_sessions[]
   refresh_tokens         refresh_tokens[]
