@@ -281,13 +281,22 @@ export class SetupService {
               update: { is_active: false },
             });
 
-            await this.companionMessagesService.createMessage({
-              userId,
-              type: CompanionMessageType.MIND_SKIPPED,
-              companionName: 'Riven',
-              title: 'Mind Paused',
-              message: 'No problem. We will leave the shelves untouched for now.',
+            const existingMindSkipped = await tx.user_companion_messages.findFirst({
+              where: {
+                user_id: userId,
+                type: CompanionMessageType.MIND_SKIPPED,
+              },
             });
+
+            if (!existingMindSkipped) {
+              await this.companionMessagesService.createMessage({
+                userId,
+                type: CompanionMessageType.MIND_SKIPPED,
+                companionName: 'Riven',
+                title: 'Mind Paused',
+                message: 'No problem. We will leave the shelves untouched for now.',
+              });
+            }
           } else {
             const mindSetupData: Prisma.user_setupsUpdateInput = {};
             const mindCreateData: Prisma.user_setupsCreateInput = {
@@ -418,10 +427,22 @@ export class SetupService {
       data: { onboarding_completed: true, updated_at: new Date() },
     });
 
-    await this.achievementsService.unlockAchievementBySlug(
+    const newJourneyAchievement = await this.achievementsService.unlockAchievementBySlug(
       userId,
       AchievementSlugs.NEW_JOURNEY_BEGINS,
     );
+
+    let achievementId = newJourneyAchievement?.id;
+    let iconUrl = newJourneyAchievement?.iconUrl;
+
+    if (!achievementId) {
+      const achievement = await this.prisma.achievements.findUnique({
+        where: { slug: AchievementSlugs.NEW_JOURNEY_BEGINS },
+        select: { id: true, icon_url: true },
+      });
+      achievementId = achievement?.id;
+      iconUrl = achievement?.icon_url;
+    }
 
     await this.companionMessagesService.createMessage({
       userId,
@@ -429,6 +450,10 @@ export class SetupService {
       companionName: 'Riven',
       title: AchievementMessages.NEW_JOURNEY_BEGINS.title,
       message: AchievementMessages.NEW_JOURNEY_BEGINS.message,
+      entityType: 'achievement',
+      entityId: achievementId,
+      action: 'open_achievement',
+      metadata: iconUrl ? { imageUrl: iconUrl } : undefined,
     });
 
     return { success: true, message: 'Onboarding completed successfully' };
