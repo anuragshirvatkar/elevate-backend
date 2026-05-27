@@ -57,10 +57,18 @@ export class NotificationsService {
     body: string,
     payload?: Record<string, unknown>,
   ): Promise<void> {
-    const devices = await this.prisma.user_notification_devices.findMany({
-      where: { user_id: userId, is_active: true },
-      select: { expo_push_token: true },
-    });
+    const [devices, companion] = await Promise.all([
+      this.prisma.user_notification_devices.findMany({
+        where: { user_id: userId, is_active: true },
+        select: { expo_push_token: true },
+      }),
+      this.prisma.user_companions.findFirst({
+        where: { user_id: userId, is_active: true },
+        include: { companion: { select: { image_url: true } } },
+      }),
+    ]);
+
+    const companionImageUrl = companion?.companion.image_url ?? null;
 
     const job = await this.prisma.notification_jobs.create({
       data: {
@@ -84,7 +92,7 @@ export class NotificationsService {
         sound: 'default' as const,
         title,
         body,
-        data: payload ?? {},
+        data: { ...payload, companionImageUrl },
       }));
 
     if (messages.length === 0) {

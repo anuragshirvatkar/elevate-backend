@@ -20,6 +20,7 @@ export class ProfileService {
       achievementCounts,
       streaks,
       pointsAggregate,
+      mindSetup,
     ] = await Promise.all([
       this.prisma.users.findUnique({
         where: { id: userId },
@@ -79,6 +80,11 @@ export class ProfileService {
       this.prisma.points_ledger.aggregate({
         where: { user_id: userId },
         _sum: { points: true },
+      }),
+
+      this.prisma.user_setups.findUnique({
+        where: { user_id_section: { user_id: userId, section: 'mind' } },
+        select: { is_active: true },
       }),
 
     ]);
@@ -175,6 +181,7 @@ export class ProfileService {
       email: user.email ?? null,
       dateOfBirth: user.date_of_birth ? user.date_of_birth.toISOString().split('T')[0] : null,
       onboardingCompleted: user.onboarding_completed,
+      mindSectionActive: mindSetup ? mindSetup.is_active : true,
       joinedAt: user.created_at ? user.created_at.toISOString() : null,
       lastSeenAt: user.last_seen_at ? user.last_seen_at.toISOString() : null,
       socialLinks: socialLinksOut,

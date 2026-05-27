@@ -220,6 +220,7 @@ Earned through control.`,
 
       unlock_requirement: {
         max_relapses_per_month: 1,
+        min_streak_days: 7,
       },
 
       revoke_requirement: {

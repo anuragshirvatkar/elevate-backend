@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, HttpCode, HttpStatus, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiOkResponse, ApiUnauthorizedResponse } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -34,5 +34,25 @@ export class NotificationsController {
       dto.platform,
     );
     return { message: 'Device registered' };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('test')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Send test notification', description: 'Sends a test push notification to all registered devices of the current user.' })
+  @ApiOkResponse({ description: 'Test notification sent' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async sendTestNotification(
+    @CurrentUser() user: { userId: string },
+  ): Promise<{ message: string }> {
+    await this.notificationsService.sendNotification(
+      user.userId,
+      'TEST',
+      'Test Notification',
+      'If you see this, push notifications are working!',
+      { type: 'test' },
+    );
+    return { message: 'Test notification sent' };
   }
 }

@@ -298,7 +298,7 @@ export class SetupService {
               });
             }
           } else {
-            const mindSetupData: Prisma.user_setupsUpdateInput = {};
+            const mindSetupData: Prisma.user_setupsUpdateInput = { is_active: true };
             const mindCreateData: Prisma.user_setupsCreateInput = {
               user: { connect: { id: userId } },
               section: 'mind',

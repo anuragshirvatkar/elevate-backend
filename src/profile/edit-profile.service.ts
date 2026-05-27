@@ -239,6 +239,11 @@ export class EditProfileService {
         where: { user_id: userId },
         data: { revoked_at: new Date() },
       });
+
+      await tx.user_notification_devices.updateMany({
+        where: { user_id: userId },
+        data: { is_active: false },
+      });
     });
 
     this.logger.log(`Account soft deleted: userId=${userId}`);

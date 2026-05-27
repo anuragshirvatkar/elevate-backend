@@ -140,7 +140,15 @@ export class ActivityAvatarHandler {
 
     const relapseCount = relapseDays.length;
 
-    if (relapseCount <= 1) {
+    const streak = await this.prisma.user_streaks.findUnique({
+      where: { user_id_section: { user_id: userId, section: 'purity' } },
+      select: { current_streak: true },
+    });
+
+    const currentStreak = streak?.current_streak ?? 0;
+    const minStreakDays = 7;
+
+    if (relapseCount <= 1 && currentStreak >= minStreakDays) {
       const result = await this.avatarsService.unlockAvatarBySlug(
         userId,
         AvatarSlugs.KAEL,
@@ -153,7 +161,13 @@ export class ActivityAvatarHandler {
         );
       }
     } else {
-      const reason = 'Multiple relapses detected this month';
+      let reason: string;
+      if (relapseCount > 1) {
+        reason = 'Multiple relapses detected this month';
+      } else {
+        reason = `Current streak (${currentStreak}) is below required (${minStreakDays} days)`;
+      }
+
       const result = await this.avatarsService.revokeAvatarBySlug(
         userId,
         AvatarSlugs.KAEL,
