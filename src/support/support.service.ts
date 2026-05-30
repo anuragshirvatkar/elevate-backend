@@ -17,6 +17,11 @@ export class SupportService {
   ) {}
 
   async uploadImages(files: Express.Multer.File[]): Promise<{ success: boolean; urls: string[] }> {
+    this.logger.log(`DEBUG: Files received: ${files.length}`);
+    if (files.length > 0) {
+      this.logger.log(`DEBUG: First file - size: ${files[0].size}, mimetype: ${files[0].mimetype}, buffer length: ${files[0].buffer?.length ?? 0}`);
+    }
+
     if (files.length === 0) {
       throw new BadRequestException({ success: false, message: 'No images provided' });
     }
