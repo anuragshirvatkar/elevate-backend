@@ -6,7 +6,7 @@ import { EditSetupDto } from './dto/setup.dto';
 import { EditMindSetupDto } from './dto/mind-setup.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AchievementsService } from '../achievements/achievements.service';
-import { AchievementSlugs } from '../achievements/triggers/achievement-slugs';
+import { AchievementSlugs } from '../achievements/constants/achievement-slugs';
 import { CompanionMessagesService } from '../companion-messages/companion-messages.service';
 import { CompanionMessageType } from '../companion-messages/companion-message-types';
 import { AchievementMessages } from '../companion-messages/templates/achievement.messages';
@@ -714,10 +714,15 @@ export class SetupService {
         });
 
         for (const book of books) {
-          if (book.isCompleted) {
+          if (book.isCompleted === true) {
             await tx.user_books.update({
               where: { id: book.userBookId },
               data: { is_completed: true, completed_at: new Date() },
+            });
+          } else if (book.isCompleted === false) {
+            await tx.user_books.update({
+              where: { id: book.userBookId },
+              data: { is_completed: false, completed_at: null },
             });
           }
         }
@@ -740,6 +745,37 @@ export class SetupService {
 
       return updatedSetup;
     });
+
+    const hadIncompleteToggle = books?.some((b) => b.isCompleted === false);
+    if (hadIncompleteToggle) {
+      const bookAchievementSlugs = [AchievementSlugs.BOOK_FINISHER, AchievementSlugs.EVOLVING_MIND];
+      for (const slug of bookAchievementSlugs) {
+        const achievement = await this.prisma.achievements.findUnique({
+          where: { slug },
+          select: { id: true },
+        });
+        if (!achievement) continue;
+
+        const unlocked = await this.prisma.user_achievements.findUnique({
+          where: { user_id_achievement_id: { user_id: userId, achievement_id: achievement.id } },
+          select: { is_unlocked: true },
+        });
+        if (!unlocked?.is_unlocked) continue;
+
+        const completedCount = await this.prisma.user_books.count({
+          where: { user_id: userId, is_completed: true },
+        });
+
+        const threshold = slug === AchievementSlugs.BOOK_FINISHER ? 1 : 3;
+        if (completedCount < threshold) {
+          const revoked = await this.achievementsService.revokeAchievement(userId, achievement.id);
+          if (revoked) {
+            this.logger.log(`Achievement revoked (book unmarked): userId=${userId} slug=${slug}`);
+            await this.companionMessagesService.deleteMessagesByEntity(userId, 'achievement', achievement.id);
+          }
+        }
+      }
+    }
 
     if (activating && !previouslyActive) {
       await this.companionMessagesService.createMessage({

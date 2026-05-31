@@ -140,18 +140,9 @@ export class ActivityAchievementHandler {
     userId: string,
     currentStreak: number,
   ): Promise<void> {
-    const distinctBooks = await this.prisma.user_activities.findMany({
-      where: {
-        user_id: userId,
-        section: 'mind',
-        did_user_do: true,
-        user_book_id: { not: null },
-      },
-      distinct: ['user_book_id'],
-      select: { user_book_id: true },
+    const completedBooksCount = await this.prisma.user_books.count({
+      where: { user_id: userId, is_completed: true },
     });
-
-    const bookCount = distinctBooks.length;
 
     const slugs: string[] = [AchievementSlugs.OPENED_THE_BOOK];
 
@@ -159,8 +150,8 @@ export class ActivityAchievementHandler {
       slugs.push(AchievementSlugs.THINKING_BEGINS, AchievementSlugs.LEARNER);
     }
     if (currentStreak >= 15) slugs.push(AchievementSlugs.KNOWLEDGE_SEEKER);
-    if (bookCount >= 1) slugs.push(AchievementSlugs.BOOK_FINISHER);
-    if (bookCount >= 3) slugs.push(AchievementSlugs.EVOLVING_MIND);
+    if (completedBooksCount >= 1) slugs.push(AchievementSlugs.BOOK_FINISHER);
+    if (completedBooksCount >= 3) slugs.push(AchievementSlugs.EVOLVING_MIND);
 
     await this.tryUnlock(userId, slugs);
   }

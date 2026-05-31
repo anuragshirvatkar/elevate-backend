@@ -94,11 +94,12 @@ export class ActivityLogsService {
     return result;
   }
 
-  private buildLast7Dates(): string[] {
+  private buildLast7Dates(referenceDate?: Date): string[] {
     const dates: string[] = [];
-    const today = new Date();
+    const ref = referenceDate ?? new Date();
+    const todayUtc = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate());
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+      const d = new Date(todayUtc - i * 86400000);
       dates.push(d.toISOString().slice(0, 10));
     }
     return dates;

@@ -160,18 +160,16 @@ export class AchievementsService {
       case AchievementSlugs.KNOWLEDGE_SEEKER:
         return currentStreak >= 15;
       case AchievementSlugs.BOOK_FINISHER: {
-        const books = await this.prisma.user_activities.findMany({
-          where: { user_id: userId, section: 'mind', did_user_do: true, user_book_id: { not: null } },
-          distinct: ['user_book_id'],
+        const count = await this.prisma.user_books.count({
+          where: { user_id: userId, is_completed: true },
         });
-        return books.length >= 1;
+        return count >= 1;
       }
       case AchievementSlugs.EVOLVING_MIND: {
-        const books = await this.prisma.user_activities.findMany({
-          where: { user_id: userId, section: 'mind', did_user_do: true, user_book_id: { not: null } },
-          distinct: ['user_book_id'],
+        const count = await this.prisma.user_books.count({
+          where: { user_id: userId, is_completed: true },
         });
-        return books.length >= 3;
+        return count >= 3;
       }
 
       case AchievementSlugs.DAY_ONE:
