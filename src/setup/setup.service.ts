@@ -326,29 +326,48 @@ export class SetupService {
                 const validCatalogs = await tx.books_catalog.findMany({
                   where: { id: { in: mindData.bookIds } },
                 });
-                if (validCatalogs.length !== mindData.bookIds.length) {
+                const validCustomBooks = await tx.user_books.findMany({
+                  where: {
+                    id: { in: mindData.bookIds },
+                    user_id: userId,
+                    book_catalog_id: null,
+                  },
+                });
+
+                const validCatalogIds = new Set(validCatalogs.map((c) => c.id));
+                const validCustomBookIds = new Set(validCustomBooks.map((b) => b.id));
+
+                const invalidIds = mindData.bookIds.filter(
+                  (id) => !validCatalogIds.has(id) && !validCustomBookIds.has(id),
+                );
+
+                if (invalidIds.length > 0) {
                   throw new BadRequestException(
                     'One or more bookIds are invalid.',
                   );
                 }
 
                 const userBookIds: string[] = [];
-                for (const catalogId of mindData.bookIds) {
-                  const catalog = validCatalogs.find((c) => c.id === catalogId)!;
-                  let userBook = await tx.user_books.findFirst({
-                    where: { user_id: userId, book_catalog_id: catalogId },
-                  });
-                  if (!userBook) {
-                    userBook = await tx.user_books.create({
-                      data: {
-                        user_id: userId,
-                        book_catalog_id: catalogId,
-                        title: catalog.title,
-                        total_pages: catalog.default_total_pages ?? 0,
-                      },
+                for (const bookId of mindData.bookIds) {
+                  if (validCustomBookIds.has(bookId)) {
+                    userBookIds.push(bookId);
+                  } else {
+                    const catalog = validCatalogs.find((c) => c.id === bookId)!;
+                    let userBook = await tx.user_books.findFirst({
+                      where: { user_id: userId, book_catalog_id: bookId },
                     });
+                    if (!userBook) {
+                      userBook = await tx.user_books.create({
+                        data: {
+                          user_id: userId,
+                          book_catalog_id: bookId,
+                          title: catalog.title,
+                          total_pages: catalog.default_total_pages ?? 0,
+                        },
+                      });
+                    }
+                    userBookIds.push(userBook.id);
                   }
-                  userBookIds.push(userBook.id);
                 }
 
                 await tx.user_setup_books.deleteMany({

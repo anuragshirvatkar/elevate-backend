@@ -77,6 +77,22 @@ export class CompanionMessagesService {
     return this.toDto(updated);
   }
 
+  async deleteMessagesByEntity(
+    userId: string,
+    entityType: string,
+    entityId: string,
+  ): Promise<number> {
+    const result = await this.prisma.user_companion_messages.deleteMany({
+      where: {
+        user_id: userId,
+        entity_type: entityType,
+        entity_id: entityId,
+      },
+    });
+
+    return result.count;
+  }
+
   toDto(record: {
     id: string;
     type: string;

@@ -20,6 +20,21 @@ export class StatsService {
     const { period, startDate, endDate } = dto;
     const range = this.calculateDateRange(period, startDate, endDate);
 
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { created_at: true },
+    });
+
+    if (user?.created_at) {
+      const joinDate = new Date(user.created_at);
+      joinDate.setUTCHours(0, 0, 0, 0);
+      if (joinDate > range.startDate) {
+        const diffMs = range.endDate.getTime() - joinDate.getTime();
+        range.totalDays = Math.floor(diffMs / 86400000) + 1;
+        range.startDate = joinDate;
+      }
+    }
+
     const mindSetup = await this.prisma.user_setups.findUnique({
       where: { user_id_section: { user_id: userId, section: 'mind' } },
       select: { is_active: true },

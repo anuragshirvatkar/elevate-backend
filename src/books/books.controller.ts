@@ -1,4 +1,4 @@
-import { Controller, Post, Put, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Put, Delete, Get, Body, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiBody, ApiOkResponse, ApiUnauthorizedResponse, ApiConflictResponse, ApiBadRequestResponse } from '@nestjs/swagger';
 import { BooksService } from './books.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -29,6 +29,34 @@ export class BooksController {
     @Body() dto: CreateCustomBookDto,
   ) {
     return this.booksService.createCustom(user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('custom')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get custom books',
+    description: 'Returns all custom books created by the authenticated user.',
+  })
+  @ApiOkResponse({ type: [BookResponseDto] })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  getCustomBooks(@CurrentUser() user: { userId: string }) {
+    return this.booksService.getCustomBooks(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('custom/:bookId')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Delete custom book',
+    description: 'Deletes a custom book from the authenticated user\'s library.',
+  })
+  @ApiOkResponse({ description: 'Book deleted successfully' })
+  @ApiBadRequestResponse({ description: 'Book not found or invalid ownership' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  deleteCustomBook(@CurrentUser() user: { userId: string }, @Param('bookId') bookId: string) {
+    return this.booksService.deleteCustomBook(user.userId, bookId);
   }
 
   @UseGuards(JwtAuthGuard)

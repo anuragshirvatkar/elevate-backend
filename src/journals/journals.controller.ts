@@ -55,7 +55,7 @@ export class JournalsController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   async getToday(
     @CurrentUser() user: { userId: string },
-  ): Promise<JournalEntry | null> {
+  ): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
     return this.journalsService.getToday(user.userId);
   }
 
@@ -75,7 +75,7 @@ export class JournalsController {
     @Query('limit') limit?: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-  ): Promise<{ data: JournalEntry[]; total: number; page: number; limit: number }> {
+  ): Promise<{ data: Omit<JournalEntry, 'pointsEarned'>[]; total: number; page: number; limit: number }> {
     const parsedPage = Math.max(1, parseInt(page ?? '1', 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit ?? '20', 10) || 20));
     return this.journalsService.getHistory(

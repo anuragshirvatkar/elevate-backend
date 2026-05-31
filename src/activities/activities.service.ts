@@ -7,10 +7,13 @@ import { ActivityResponseDto } from './dto/activity-response.dto';
 import { LogActivityDto } from './dto/log-activity.dto';
 import { LogActivityResponseDto } from './dto/log-activity-response.dto';
 import { ActivityLogEntryDto } from './dto/activity-log-entry.dto';
+import { AchievementsService } from '../achievements/achievements.service';
+import { CompanionMessagesService } from '../companion-messages/companion-messages.service';
 
 const CUSTOM_SECTIONS = ['power', 'craft'] as const;
 const LOG_SECTIONS = ['power', 'craft', 'mind', 'purity'] as const;
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+const MAX_CUSTOM_ACTIVITIES = 5;
 
 @Injectable()
 export class ActivitiesService {
@@ -19,6 +22,8 @@ export class ActivitiesService {
   constructor(
     private prisma: PrismaService,
     private eventsService: EventsService,
+    private achievementsService: AchievementsService,
+    private companionMessagesService: CompanionMessagesService,
   ) {}
 
   async createCustom(
@@ -28,6 +33,16 @@ export class ActivitiesService {
     if (!CUSTOM_SECTIONS.includes(dto.section as (typeof CUSTOM_SECTIONS)[number])) {
       throw new BadRequestException(
         `Invalid section "${dto.section}". Allowed sections for custom activities: ${CUSTOM_SECTIONS.join(', ')}.`,
+      );
+    }
+
+    const count = await this.prisma.activities.count({
+      where: { user_id: userId, section: dto.section },
+    });
+
+    if (count >= MAX_CUSTOM_ACTIVITIES) {
+      throw new BadRequestException(
+        `Maximum ${MAX_CUSTOM_ACTIVITIES} custom activities allowed per section.`,
       );
     }
 
@@ -51,6 +66,16 @@ export class ActivitiesService {
     });
 
     return activity;
+  }
+
+  async getCustomActivities(userId: string): Promise<ActivityResponseDto[]> {
+    const activities = await this.prisma.activities.findMany({
+      where: { user_id: userId },
+      select: { id: true, name: true, section: true },
+      orderBy: { name: 'asc' },
+    });
+
+    return activities;
   }
 
   async logActivity(
@@ -157,6 +182,11 @@ export class ActivitiesService {
 
     if (existing) {
       operation = 'update';
+      const previousActivity = await this.prisma.user_activities.findUnique({
+        where: { id: existing.id },
+        select: { did_user_do: true },
+      });
+
       const updateData: Record<string, unknown> = {};
       if (dto.didUserDo !== undefined) updateData.did_user_do = dto.didUserDo;
       if (dto.hours !== undefined) updateData.hours = dto.hours;
@@ -169,6 +199,12 @@ export class ActivitiesService {
         data: updateData,
         select: { id: true },
       });
+
+      if (previousActivity && dto.section !== 'purity') {
+        if (previousActivity.did_user_do === true && dto.didUserDo === false) {
+          await this.handleActivityMarkedAsFailed(userId, dto.section);
+        }
+      }
     } else {
       operation = 'create';
       record = await this.prisma.user_activities.create({
@@ -327,5 +363,21 @@ export class ActivitiesService {
       images: log.activity_images.map((img) => img.image_url),
       date: log.date.toISOString().split('T')[0],
     }));
+  }
+
+  private async handleActivityMarkedAsFailed(userId: string, section: string): Promise<void> {
+    const ineligible = await this.achievementsService.getIneligibleSectionAchievements(userId, section);
+
+    for (const achievement of ineligible) {
+      const revoked = await this.achievementsService.revokeAchievement(userId, achievement.id);
+      if (revoked) {
+        this.logger.log(`Achievement revoked (no longer eligible): userId=${userId} slug=${achievement.slug}`);
+        await this.companionMessagesService.deleteMessagesByEntity(
+          userId,
+          'achievement',
+          achievement.id,
+        );
+      }
+    }
   }
 }

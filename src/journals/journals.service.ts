@@ -1,6 +1,12 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertJournalDto } from './dto/upsert-journal.dto';
+import { JournalCreatedEvent } from '../events/journal-created.event';
+import { PointsUpdatedEvent } from '../events/points-updated.event';
+import { EventNames } from '../events/event-names';
+
+const JOURNAL_POINTS = 5;
 
 export interface JournalEntry {
   id: string;
@@ -11,6 +17,7 @@ export interface JournalEntry {
   tomorrow_mission: string | null;
   created_at: Date;
   updated_at: Date;
+  pointsEarned: number;
 }
 
 const SELECT_FIELDS = {
@@ -28,7 +35,10 @@ const SELECT_FIELDS = {
 export class JournalsService {
   private readonly logger = new Logger(JournalsService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   async upsert(userId: string, dto: UpsertJournalDto): Promise<JournalEntry> {
     const parsedDate = this.parseDate(dto.date);
@@ -45,6 +55,7 @@ export class JournalsService {
     });
 
     let result;
+    let pointsEarned = 0;
 
     if (existing) {
       result = await this.prisma.journals.update({
@@ -69,14 +80,36 @@ export class JournalsService {
         },
         select: SELECT_FIELDS,
       });
+
+      pointsEarned = JOURNAL_POINTS;
+
+      await this.prisma.points_ledger.create({
+        data: {
+          user_id: userId,
+          points: JOURNAL_POINTS,
+          section: 'consistency',
+          source: 'journal',
+          reference_id: result.id,
+        },
+      });
+
+      this.eventEmitter.emit(
+        EventNames.POINTS_UPDATED,
+        new PointsUpdatedEvent({ userId, section: 'consistency', delta: JOURNAL_POINTS }),
+      );
+
+      this.eventEmitter.emit(
+        EventNames.JOURNAL_CREATED,
+        new JournalCreatedEvent({ userId, journalId: result.id }),
+      );
     }
 
-    this.logger.log(`Journal updated: userId=${userId} date=${dto.date}`);
+    this.logger.log(`Journal upserted: userId=${userId} date=${dto.date} pointsEarned=${pointsEarned}`);
 
-    return this.formatEntry(result);
+    return { ...this.formatEntry(result), pointsEarned };
   }
 
-  async getToday(userId: string): Promise<JournalEntry | null> {
+  async getToday(userId: string): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
@@ -94,7 +127,7 @@ export class JournalsService {
     limit: number,
     startDate?: string,
     endDate?: string,
-  ): Promise<{ data: JournalEntry[]; total: number; page: number; limit: number }> {
+  ): Promise<{ data: Omit<JournalEntry, 'pointsEarned'>[]; total: number; page: number; limit: number }> {
     const parsedStart = startDate ? this.parseDate(startDate) : undefined;
     const parsedEnd = endDate ? this.parseDate(endDate) : undefined;
 
@@ -139,8 +172,8 @@ export class JournalsService {
   }
 
   private formatEntry(
-    entry: Omit<JournalEntry, 'date'> & { date: Date },
-  ): JournalEntry {
+    entry: Omit<JournalEntry, 'date' | 'pointsEarned'> & { date: Date },
+  ): Omit<JournalEntry, 'pointsEarned'> {
     return {
       ...entry,
       date: entry.date.toISOString().split('T')[0],

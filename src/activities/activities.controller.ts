@@ -35,6 +35,19 @@ export class ActivitiesController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('custom')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get custom activities',
+    description: 'Returns all custom activities created by the authenticated user.',
+  })
+  @ApiOkResponse({ type: [ActivityResponseDto] })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  getCustomActivities(@CurrentUser() user: { userId: string }) {
+    return this.activitiesService.getCustomActivities(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Put('log')
   @ApiBearerAuth()
   @ApiOperation({
