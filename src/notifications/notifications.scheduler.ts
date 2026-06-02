@@ -155,7 +155,7 @@ export class NotificationsScheduler {
     }
   }
 
-  @Cron('0 * * * *')
+  @Cron('30 * * * *')
   async checkActivityReminders(): Promise<void> {
     const now = new Date();
     const currentHour = now.getUTCHours();
@@ -173,7 +173,7 @@ export class NotificationsScheduler {
       if (!setup.preferred_time) continue;
       if ((setup as any).is_active === false) continue;
 
-      const reminderHour = (setup.preferred_time.getUTCHours() + 1) % 24;
+      const reminderHour = (setup.preferred_time.getUTCHours() - 1 + 24) % 24;
       if (reminderHour !== currentHour) continue;
 
       const cooldown = await this.notificationsService.getCooldownData(

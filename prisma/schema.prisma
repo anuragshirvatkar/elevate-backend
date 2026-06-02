@@ -458,7 +458,7 @@ model points_ledger {
   source       String
   reference_id String?   @db.Uuid
   metadata     Json?
-  created_at   DateTime?
+  created_at   DateTime  @default(now())
 
   user users @relation(fields: [user_id], references: [id])
 
