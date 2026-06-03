@@ -51,12 +51,14 @@ export class JournalsController {
   @Get('today')
   @ApiBearerAuth()
   @ApiOperation({ summary: "Get today's journal entry" })
+  @ApiQuery({ name: 'today', required: false, example: '2026-06-03', description: "Client's local today date (YYYY-MM-DD). Always pass this to get the correct entry regardless of timezone." })
   @ApiOkResponse({ description: "Today's journal entry, or null if not created yet" })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   async getToday(
     @CurrentUser() user: { userId: string },
+    @Query('today') today?: string,
   ): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
-    return this.journalsService.getToday(user.userId);
+    return this.journalsService.getToday(user.userId, today);
   }
 
   @UseGuards(JwtAuthGuard)

@@ -92,7 +92,7 @@ export class NotificationsService {
         sound: 'default' as const,
         title,
         body,
-        data: { ...payload, companionImageUrl },
+        data: { type, ...payload, companionImageUrl },
       }));
 
     if (messages.length === 0) {

@@ -19,4 +19,10 @@ export class StatsQueryDto {
   @IsString()
   @IsISO8601({ strict: false })
   endDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-03', description: "Client's local today date (YYYY-MM-DD). Always pass this to get accurate stats regardless of timezone." })
+  @IsOptional()
+  @IsString()
+  @IsISO8601({ strict: false })
+  today?: string;
 }

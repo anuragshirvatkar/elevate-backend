@@ -109,12 +109,12 @@ export class JournalsService {
     return { ...this.formatEntry(result), pointsEarned };
   }
 
-  async getToday(userId: string): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
+  async getToday(userId: string, today?: string): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
+    const date = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
+    date.setUTCHours(0, 0, 0, 0);
 
     const entry = await this.prisma.journals.findUnique({
-      where: { user_id_date: { user_id: userId, date: today } },
+      where: { user_id_date: { user_id: userId, date } },
       select: SELECT_FIELDS,
     });
 

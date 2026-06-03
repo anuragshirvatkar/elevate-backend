@@ -17,8 +17,8 @@ export class StatsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getStats(userId: string, dto: StatsQueryDto) {
-    const { period, startDate, endDate } = dto;
-    const range = this.calculateDateRange(period, startDate, endDate);
+    const { period, startDate, endDate, today } = dto;
+    const range = this.calculateDateRange(period, startDate, endDate, today);
 
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
@@ -186,8 +186,9 @@ export class StatsService {
     period: '7d' | '30d' | '90d' | '1y' | 'all' | 'custom' | undefined,
     startDate: string | undefined,
     endDate: string | undefined,
+    today?: string,
   ): DateRange {
-    const now = new Date();
+    const now = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
     now.setUTCHours(0, 0, 0, 0);
 
     if (period === 'custom') {
@@ -207,7 +208,9 @@ export class StatsService {
     const days = period ? periodDays[period] ?? 30 : 30;
 
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (days - 1)));
-    return { startDate: start, endDate: now, totalDays: days };
+    const end = new Date(now);
+    end.setUTCHours(23, 59, 59, 999);
+    return { startDate: start, endDate: end, totalDays: days };
   }
 
   private calculatePowerStats(

@@ -10,8 +10,9 @@ export class ActivityLogsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async getLast7Days(userId: string): Promise<Record<string, unknown>> {
-    const dates = this.buildLast7Dates();
+  async getLast7Days(userId: string, today?: string): Promise<Record<string, unknown>> {
+    const referenceDate = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
+    const dates = this.buildLast7Dates(referenceDate);
     const startDate = new Date(dates[0]);
     const endDate = new Date(dates[dates.length - 1]);
     endDate.setUTCHours(23, 59, 59, 999);
@@ -94,12 +95,11 @@ export class ActivityLogsService {
     return result;
   }
 
-  private buildLast7Dates(referenceDate?: Date): string[] {
+  private buildLast7Dates(referenceDate: Date): string[] {
     const dates: string[] = [];
-    const ref = referenceDate ?? new Date();
-    const todayUtc = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate());
+    const anchorUtc = Date.UTC(referenceDate.getUTCFullYear(), referenceDate.getUTCMonth(), referenceDate.getUTCDate());
     for (let i = 6; i >= 0; i--) {
-      const d = new Date(todayUtc - i * 86400000);
+      const d = new Date(anchorUtc - i * 86400000);
       dates.push(d.toISOString().slice(0, 10));
     }
     return dates;

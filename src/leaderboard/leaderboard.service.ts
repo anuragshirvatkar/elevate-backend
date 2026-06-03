@@ -6,6 +6,7 @@ export interface RankingItem {
   userId: string;
   name: string;
   avatar: string | null;
+  profileImageUrl: string | null;
   points: number;
 }
 
@@ -33,10 +34,17 @@ export class LeaderboardService {
     const skip = (page - 1) * limit;
 
     if (section !== 'all') {
+      const nonDeletedUserIds = await this.prisma.users
+        .findMany({
+          where: { deleted_at: null },
+          select: { id: true },
+        })
+        .then((users) => users.map((u) => u.id));
+
       const [rankings, myAggregate] = await Promise.all([
         this.prisma.points_ledger.groupBy({
           by: ['user_id'],
-          where: { ...sectionWhere, ...dateWhere },
+          where: { ...sectionWhere, ...dateWhere, user_id: { in: nonDeletedUserIds } },
           _sum: { points: true },
           orderBy: { _sum: { points: 'desc' } },
           skip,
@@ -50,13 +58,13 @@ export class LeaderboardService {
 
       const userIds = rankings.map((r) => r.user_id);
       const usersData = await this.prisma.users.findMany({
-        where: { id: { in: userIds } },
+        where: { id: { in: userIds }, deleted_at: null },
         select: {
           id: true,
           username: true,
           user_avatars: {
             where: { is_selected: true },
-            select: { avatar: { select: { slug: true } } },
+            select: { avatar: { select: { slug: true, profile_image_url: true } } },
             take: 1,
           },
         },
@@ -70,6 +78,7 @@ export class LeaderboardService {
           userId: r.user_id,
           name: user?.username ?? 'Unknown',
           avatar: user?.user_avatars[0]?.avatar?.slug ?? null,
+          profileImageUrl: user?.user_avatars[0]?.avatar?.profile_image_url ?? null,
           points: r._sum.points ?? 0,
         };
       });
@@ -77,7 +86,7 @@ export class LeaderboardService {
       const myPoints = myAggregate._sum.points ?? 0;
       const usersAhead = await this.prisma.points_ledger.groupBy({
         by: ['user_id'],
-        where: { ...sectionWhere, ...dateWhere },
+        where: { ...sectionWhere, ...dateWhere, user_id: { in: nonDeletedUserIds } },
         _sum: { points: true },
         having: { points: { _sum: { gt: myPoints } } },
       });
@@ -85,50 +94,48 @@ export class LeaderboardService {
       return { rankings: rankingItems, currentUser: { rank: usersAhead.length + 1, points: myPoints } };
     }
 
+    const nonDeletedUserIds = await this.prisma.users
+      .findMany({
+        where: { deleted_at: null },
+        select: { id: true },
+      })
+      .then((users) => users.map((u) => u.id));
+
     const allRankings = await this.prisma.points_ledger.groupBy({
       by: ['user_id'],
-      where: { ...dateWhere },
+      where: { ...dateWhere, user_id: { in: nonDeletedUserIds } },
       _sum: { points: true },
     });
 
     const allUserIds = allRankings.map((r) => r.user_id);
 
-    const [sectionCounts, usersData] = await Promise.all([
-      this.prisma.user_setups.groupBy({
-        by: ['user_id'],
-        where: { user_id: { in: allUserIds }, is_active: true },
-        _count: { section: true },
-      }),
-      this.prisma.users.findMany({
-        where: { id: { in: allUserIds } },
-        select: {
-          id: true,
-          username: true,
-          user_avatars: {
-            where: { is_selected: true },
-            select: { avatar: { select: { slug: true } } },
-            take: 1,
-          },
+    const usersData = await this.prisma.users.findMany({
+      where: { id: { in: allUserIds }, deleted_at: null },
+      select: {
+        id: true,
+        username: true,
+        user_avatars: {
+          where: { is_selected: true },
+          select: { avatar: { select: { slug: true, profile_image_url: true } } },
+          take: 1,
         },
-      }),
-    ]);
+      },
+    });
 
-    const sectionCountMap = new Map(sectionCounts.map((s) => [s.user_id, s._count.section]));
     const userMap = new Map(usersData.map((u) => [u.id, u]));
 
-    const normalized = allRankings
+    const sorted = allRankings
       .map((r) => ({
         user_id: r.user_id,
         points: r._sum.points ?? 0,
-        score: Math.round((r._sum.points ?? 0) / Math.max(sectionCountMap.get(r.user_id) ?? 1, 1)),
       }))
-      .sort((a, b) => b.score - a.score);
+      .sort((a, b) => b.points - a.points);
 
-    const myEntry = normalized.find((r) => r.user_id === currentUserId);
-    const myScore = myEntry?.score ?? 0;
-    const myRank = normalized.findIndex((r) => r.user_id === currentUserId) + 1;
+    const myEntry = sorted.find((r) => r.user_id === currentUserId);
+    const myPoints = myEntry?.points ?? 0;
+    const myRank = sorted.findIndex((r) => r.user_id === currentUserId) + 1;
 
-    const paginated = normalized.slice(skip, skip + limit);
+    const paginated = sorted.slice(skip, skip + limit);
     const rankingItems: RankingItem[] = paginated.map((r, i) => {
       const user = userMap.get(r.user_id);
       return {
@@ -136,11 +143,12 @@ export class LeaderboardService {
         userId: r.user_id,
         name: user?.username ?? 'Unknown',
         avatar: user?.user_avatars[0]?.avatar?.slug ?? null,
-        points: r.score,
+        profileImageUrl: user?.user_avatars[0]?.avatar?.profile_image_url ?? null,
+        points: r.points,
       };
     });
 
-    return { rankings: rankingItems, currentUser: { rank: myRank || normalized.length + 1, points: myScore } };
+    return { rankings: rankingItems, currentUser: { rank: myRank || sorted.length + 1, points: myPoints } };
   }
 
   getDateFilter(period: string): Record<string, unknown> {
