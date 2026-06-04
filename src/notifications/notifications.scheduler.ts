@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
@@ -39,13 +39,28 @@ const STREAK_ACHIEVEMENT_CONFIG: Record<string, Array<{ slug: string; threshold:
 };
 
 @Injectable()
-export class NotificationsScheduler {
+export class NotificationsScheduler implements OnModuleInit {
   private readonly logger = new Logger(NotificationsScheduler.name);
 
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
   ) {}
+
+  onModuleInit() {
+    const now = new Date();
+    this.logger.log(
+      `[SETUP] NotificationsScheduler initialized. ` +
+      `Server local time: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST | ` +
+      `process.env.TZ=${process.env.TZ ?? '(not set)'} | ` +
+      `now.getHours()=${now.getHours()} now.getUTCHours()=${now.getUTCHours()}`,
+    );
+    this.logger.log(
+      `[SETUP] Crons registered: checkActivityReminders (every :00/:30), ` +
+      `checkStreakAtRisk (22:00), checkBirthdays (09:00), ` +
+      `checkNearUnlock (19:00), checkInactivity (12:00), checkEodLogs (21:00)`,
+    );
+  }
 
   @Cron('0 9 * * *')
   async checkBirthdays(): Promise<void> {
@@ -163,14 +178,26 @@ export class NotificationsScheduler {
     const windowStartMinutes = (now.getHours() * 60 + now.getMinutes() + 30) % 1440;
     const windowEndMinutes = (now.getHours() * 60 + now.getMinutes() + 60) % 1440;
 
+    const windowStartStr = `${String(Math.floor(windowStartMinutes / 60)).padStart(2, '0')}:${String(windowStartMinutes % 60).padStart(2, '0')}`;
+    const windowEndStr = `${String(Math.floor(windowEndMinutes / 60)).padStart(2, '0')}:${String(windowEndMinutes % 60).padStart(2, '0')}`;
+
+    this.logger.log(
+      `[CRON RAN] checkActivityReminders fired. ` +
+      `Server local: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST | ` +
+      `getHours()=${now.getHours()} getUTCHours()=${now.getUTCHours()} | ` +
+      `window=[${windowStartStr}, ${windowEndStr})`,
+    );
+
     const setups = await this.prisma.user_setups.findMany({
       where: {
         preferred_time: { not: null },
         section: { in: ['power', 'mind', 'craft'] },
         is_active: true,
       },
-      select: { user_id: true, section: true, preferred_time: true },
+      select: { id: true, user_id: true, section: true, preferred_time: true },
     });
+
+    this.logger.log(`[CRON] checkActivityReminders: found ${setups.length} setup(s) with preferred_time`);
 
     const today = this.getTodayUtc();
     const tomorrow = new Date(today);
@@ -180,10 +207,17 @@ export class NotificationsScheduler {
       if (!setup.preferred_time) continue;
 
       const prefMinutes = setup.preferred_time.getUTCHours() * 60 + setup.preferred_time.getUTCMinutes();
+      const prefStr = `${String(setup.preferred_time.getUTCHours()).padStart(2, '0')}:${String(setup.preferred_time.getUTCMinutes()).padStart(2, '0')}`;
       const inWindow =
         windowStartMinutes <= windowEndMinutes
           ? prefMinutes >= windowStartMinutes && prefMinutes < windowEndMinutes
           : prefMinutes >= windowStartMinutes || prefMinutes < windowEndMinutes;
+
+      this.logger.log(
+        `[CRON] setup userId=${setup.user_id} section=${setup.section} ` +
+        `prefTime=${prefStr}(${prefMinutes}min) window=[${windowStartStr}(${windowStartMinutes}), ${windowEndStr}(${windowEndMinutes})) ` +
+        `inWindow=${inWindow}`,
+      );
 
       if (!inWindow) continue;
 
@@ -195,23 +229,102 @@ export class NotificationsScheduler {
           did_user_do: true,
         },
       });
-      if (alreadyLogged) continue;
 
-      const sectionLabel = setup.section.charAt(0).toUpperCase() + setup.section.slice(1);
-      const activityLabel =
-        setup.section === 'power'
-          ? 'gym session'
-          : setup.section === 'mind'
-            ? 'reading log'
-            : 'craft session';
+      if (alreadyLogged) {
+        this.logger.log(`[CRON] SKIP userId=${setup.user_id} section=${setup.section} — already logged today`);
+        continue;
+      }
+
+      let activityName: string | null = null;
+      if (setup.section === 'mind') {
+        const setupBook = await this.prisma.user_setup_books.findFirst({
+          where: { user_setup_id: setup.id, user_book: { is_completed: false } },
+          include: { user_book: { select: { title: true } } },
+        });
+        activityName = setupBook?.user_book?.title ?? null;
+      } else {
+        const primary = await this.prisma.user_setup_activities.findFirst({
+          where: { user_setup_id: setup.id, is_primary: true },
+          include: { activity: { select: { name: true } } },
+        });
+        activityName = primary?.activity?.name ?? null;
+      }
+
+      const { title, body } = this.buildActivityReminderMessage(setup.section, activityName);
+
+      this.logger.log(`[CRON] SENDING reminder to userId=${setup.user_id} section=${setup.section} activity="${activityName}" title="${title}"`);
 
       await this.notificationsService.sendNotification(
         setup.user_id,
         NotificationTypes.ACTIVITY_REMINDER,
-        `${sectionLabel} Reminder`,
-        `Add your ${activityLabel} today.`,
+        title,
+        body,
         { section: setup.section },
       );
+    }
+  }
+
+  @Cron('0 21 * * *')
+  async checkEodLogs(): Promise<void> {
+    const today = this.getTodayUtc();
+    const tomorrow = new Date(today);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+    const setups = await this.prisma.user_setups.findMany({
+      where: { is_active: true, section: { in: ['power', 'craft', 'mind'] } },
+      select: { user_id: true, section: true },
+    });
+
+    const userSectionMap = new Map<string, string[]>();
+    for (const s of setups) {
+      if (!userSectionMap.has(s.user_id)) userSectionMap.set(s.user_id, []);
+      userSectionMap.get(s.user_id)!.push(s.section);
+    }
+
+    for (const [userId, sections] of userSectionMap) {
+      const cooldown = await this.notificationsService.getCooldownData(
+        userId,
+        NotificationTypes.EOD_LOG_REMINDER,
+      );
+      if (cooldown) continue;
+
+      const loggedToday = await this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section: { in: sections },
+          date: { gte: today, lt: tomorrow },
+        },
+        select: { section: true },
+      });
+
+      const loggedSections = new Set(loggedToday.map((l) => l.section));
+      const unlogged = sections.filter((s) => !loggedSections.has(s));
+
+      if (unlogged.length === 0) continue;
+
+      const labels = unlogged.map((s) => s.charAt(0).toUpperCase() + s.slice(1));
+      const body =
+        unlogged.length === 1
+          ? `${labels[0]} is still unlogged today. Close the day strong.`
+          : `${labels.join(' and ')} are still unlogged today. Don't leave them open.`;
+
+      await this.notificationsService.sendNotification(
+        userId,
+        NotificationTypes.EOD_LOG_REMINDER,
+        'Log your day',
+        body,
+        { sections: unlogged },
+      );
+
+      await this.notificationsService.setCooldown(
+        userId,
+        NotificationTypes.EOD_LOG_REMINDER,
+        undefined,
+        COOLDOWN_TTL[NotificationTypes.EOD_LOG_REMINDER],
+        { lastSent: new Date().toISOString() },
+      );
+
+      this.logger.log(`[CRON] EOD reminder sent: userId=${userId} unlogged=${unlogged.join(',')}`);
     }
   }
 
@@ -406,6 +519,46 @@ export class NotificationsScheduler {
         }
       }
     }
+  }
+
+  private buildActivityReminderMessage(
+    section: string,
+    activityName: string | null,
+  ): { title: string; body: string } {
+    const activity = activityName ?? (section === 'power' ? 'workout' : section === 'craft' ? 'session' : 'reading');
+
+    if (section === 'power') {
+      const variants = [
+        { title: 'Time to Train', body: `You have a ${activity} coming up. Get ready.` },
+        { title: 'Get Ready', body: `${activity} ahead. Show up strong.` },
+        { title: 'Move Time', body: `Your ${activity} session is near. Don't skip.` },
+        { title: 'Power Up', body: `${activity} is up next. You know the drill.` },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    if (section === 'craft') {
+      const variants = [
+        { title: 'Lock In', body: `You have a ${activity} session coming up. Get focused.` },
+        { title: 'Build Time', body: `${activity} ahead. Zone in.` },
+        { title: 'Time to Create', body: `Your ${activity} session is near. No distractions.` },
+        { title: 'Craft Ahead', body: `${activity} — coming up. Be ready.` },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    if (section === 'mind') {
+      const book = activityName ?? 'your book';
+      const variants = [
+        { title: 'Reading Time', body: `Time to pick up ${book}. A few pages go far.` },
+        { title: 'Open a Page', body: `${book} is waiting. Don't let today slip by.` },
+        { title: 'Feed Your Mind', body: `${book} — your session is coming up.` },
+        { title: 'Knowledge Time', body: `${book}. A few pages is all it takes.` },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    return { title: 'Reminder', body: `Your ${activity} session is coming up.` };
   }
 
   private getTodayUtc(): Date {

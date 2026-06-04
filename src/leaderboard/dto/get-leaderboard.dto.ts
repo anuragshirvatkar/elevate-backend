@@ -35,4 +35,8 @@ export class GetLeaderboardDto {
   @Min(1)
   @Max(100)
   limit?: number;
+
+  @ApiPropertyOptional({ description: 'Ignored by backend; allowed for client caching' })
+  @IsOptional()
+  today?: string;
 }

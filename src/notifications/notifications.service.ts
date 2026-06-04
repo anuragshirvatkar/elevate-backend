@@ -64,11 +64,15 @@ export class NotificationsService {
       }),
       this.prisma.user_companions.findFirst({
         where: { user_id: userId, is_active: true },
-        include: { companion: { select: { image_url: true } } },
+        include: { companion: { select: { image_url: true, name: true } } },
       }),
     ]);
 
     const companionImageUrl = companion?.companion.image_url ?? null;
+    const companionName = companion?.companion.name ?? null;
+    const fullTitle = companionName ? `${companionName} · ${title}` : title;
+
+    this.logger.log(`[SEND] userId=${userId} type=${type} devices=${devices.length}`);
 
     const job = await this.prisma.notification_jobs.create({
       data: {
@@ -82,6 +86,7 @@ export class NotificationsService {
     });
 
     if (devices.length === 0) {
+      this.logger.warn(`[SEND] userId=${userId} type=${type} — no registered devices, skipping`);
       return;
     }
 
@@ -90,14 +95,19 @@ export class NotificationsService {
       .map((d) => ({
         to: d.expo_push_token,
         sound: 'default' as const,
-        title,
+        title: fullTitle,
         body,
         data: { type, ...payload, companionImageUrl },
-      }));
+        ...(companionImageUrl ? { imageUrl: companionImageUrl } : {}),
+      } as ExpoPushMessage));
 
     if (messages.length === 0) {
+      this.logger.warn(`[SEND] userId=${userId} type=${type} — all tokens invalid (failed isExpoPushToken check)`);
       return;
     }
+
+    this.logger.log(`[SEND] userId=${userId} type=${type} title="${fullTitle}" — sending to ${messages.length} token(s): ${messages.map(m => m.to).join(', ')}`);
+
 
     try {
       const chunks = this.expo.chunkPushNotifications(messages);
@@ -105,6 +115,7 @@ export class NotificationsService {
         const tickets = await this.expo.sendPushNotificationsAsync(chunk);
         for (let i = 0; i < tickets.length; i++) {
           const ticket = tickets[i];
+          this.logger.log(`[SEND] ticket[${i}] status=${ticket.status}${(ticket as any).id ? ` id=${(ticket as any).id}` : ''}${(ticket as any).message ? ` message=${(ticket as any).message}` : ''}${(ticket as any).details ? ` details=${JSON.stringify((ticket as any).details)}` : ''}`);
           if (
             ticket.status === 'error' &&
             (ticket as { details?: { error?: string } }).details?.error === 'DeviceNotRegistered'

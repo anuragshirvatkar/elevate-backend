@@ -22,6 +22,7 @@ export const NotificationTypes = {
 
   INACTIVE_FINAL: 'inactive_final',
   INSIGHT: 'insight',
+  EOD_LOG_REMINDER: 'eod_log_reminder',
 } as const;
 
 export type NotificationType = (typeof NotificationTypes)[keyof typeof NotificationTypes];
@@ -49,4 +50,5 @@ export const COOLDOWN_TTL: Record<string, number> = {
   [NotificationTypes.MILESTONE_CRAFT]: 86400 * 365,
   [NotificationTypes.MILESTONE_PURITY]: 86400 * 365,
   [NotificationTypes.INACTIVE_FINAL]: 86400 * 30,
+  [NotificationTypes.EOD_LOG_REMINDER]: 86400,
 };
