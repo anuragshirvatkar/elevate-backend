@@ -158,9 +158,10 @@ export class NotificationsScheduler {
   @Cron('0,30 * * * *')
   async checkActivityReminders(): Promise<void> {
     const now = new Date();
-    // Window: preferred_time must fall in [now+30min, now+60min)
-    const windowStartMinutes = (now.getUTCHours() * 60 + now.getUTCMinutes() + 30) % 1440;
-    const windowEndMinutes = (now.getUTCHours() * 60 + now.getUTCMinutes() + 60) % 1440;
+    // preferred_time is stored as the user's local time (naively, without UTC conversion),
+    // so the window must be computed in server local time to match.
+    const windowStartMinutes = (now.getHours() * 60 + now.getMinutes() + 30) % 1440;
+    const windowEndMinutes = (now.getHours() * 60 + now.getMinutes() + 60) % 1440;
 
     const setups = await this.prisma.user_setups.findMany({
       where: {
