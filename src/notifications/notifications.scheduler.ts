@@ -155,14 +155,20 @@ export class NotificationsScheduler {
     }
   }
 
-  @Cron('30 * * * *')
+  @Cron('0,30 * * * *')
   async checkActivityReminders(): Promise<void> {
     const now = new Date();
-    const currentHour = now.getUTCHours();
+    // Window: preferred_time must fall in [now+30min, now+60min)
+    const windowStartMinutes = (now.getUTCHours() * 60 + now.getUTCMinutes() + 30) % 1440;
+    const windowEndMinutes = (now.getUTCHours() * 60 + now.getUTCMinutes() + 60) % 1440;
 
     const setups = await this.prisma.user_setups.findMany({
-      where: { preferred_time: { not: null } },
-      select: { user_id: true, section: true, preferred_time: true, is_active: true },
+      where: {
+        preferred_time: { not: null },
+        section: { in: ['power', 'mind', 'craft'] },
+        is_active: true,
+      },
+      select: { user_id: true, section: true, preferred_time: true },
     });
 
     const today = this.getTodayUtc();
@@ -171,17 +177,14 @@ export class NotificationsScheduler {
 
     for (const setup of setups) {
       if (!setup.preferred_time) continue;
-      if ((setup as any).is_active === false) continue;
 
-      const reminderHour = (setup.preferred_time.getUTCHours() - 1 + 24) % 24;
-      if (reminderHour !== currentHour) continue;
+      const prefMinutes = setup.preferred_time.getUTCHours() * 60 + setup.preferred_time.getUTCMinutes();
+      const inWindow =
+        windowStartMinutes <= windowEndMinutes
+          ? prefMinutes >= windowStartMinutes && prefMinutes < windowEndMinutes
+          : prefMinutes >= windowStartMinutes || prefMinutes < windowEndMinutes;
 
-      const cooldown = await this.notificationsService.getCooldownData(
-        setup.user_id,
-        NotificationTypes.ACTIVITY_REMINDER,
-        setup.section,
-      );
-      if (cooldown) continue;
+      if (!inWindow) continue;
 
       const alreadyLogged = await this.prisma.user_activities.findFirst({
         where: {
@@ -199,9 +202,7 @@ export class NotificationsScheduler {
           ? 'gym session'
           : setup.section === 'mind'
             ? 'reading log'
-            : setup.section === 'craft'
-              ? 'craft session'
-              : 'activity';
+            : 'craft session';
 
       await this.notificationsService.sendNotification(
         setup.user_id,
@@ -209,14 +210,6 @@ export class NotificationsScheduler {
         `${sectionLabel} Reminder`,
         `Add your ${activityLabel} today.`,
         { section: setup.section },
-      );
-
-      await this.notificationsService.setCooldown(
-        setup.user_id,
-        NotificationTypes.ACTIVITY_REMINDER,
-        setup.section,
-        COOLDOWN_TTL[NotificationTypes.ACTIVITY_REMINDER],
-        { lastSent: new Date().toISOString() },
       );
     }
   }
