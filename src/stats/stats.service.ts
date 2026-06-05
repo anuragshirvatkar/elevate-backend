@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getLocalToday } from '../utils/date.utils';
 import { StatsQueryDto } from './dto/stats.dto';
 
 const SECTIONS = ['power', 'mind', 'craft', 'purity'] as const;
@@ -18,16 +19,18 @@ export class StatsService {
 
   async getStats(userId: string, dto: StatsQueryDto) {
     const { period, startDate, endDate, today } = dto;
-    const range = this.calculateDateRange(period, startDate, endDate, today);
 
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
-      select: { created_at: true },
+      select: { created_at: true, timezone: true },
     });
 
+    const range = this.calculateDateRange(period, startDate, endDate, today, user?.timezone ?? 'Asia/Kolkata');
+
     if (user?.created_at) {
-      const joinDate = new Date(user.created_at);
-      joinDate.setUTCHours(0, 0, 0, 0);
+      const userTz = user.timezone ?? 'Asia/Kolkata';
+      const joinDateStr = user.created_at.toLocaleDateString('sv-SE', { timeZone: userTz });
+      const joinDate = new Date(`${joinDateStr}T00:00:00.000Z`);
       if (joinDate > range.startDate) {
         const diffMs = range.endDate.getTime() - joinDate.getTime();
         range.totalDays = Math.floor(diffMs / 86400000) + 1;
@@ -187,9 +190,9 @@ export class StatsService {
     startDate: string | undefined,
     endDate: string | undefined,
     today?: string,
+    timezone = 'Asia/Kolkata',
   ): DateRange {
-    const now = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
-    now.setUTCHours(0, 0, 0, 0);
+    const now = today ? new Date(`${today}T00:00:00.000Z`) : getLocalToday(timezone);
 
     if (period === 'custom') {
       if (!startDate || !endDate) {

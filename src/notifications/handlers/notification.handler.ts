@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { getLocalWeekMonday } from '../../utils/date.utils';
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications.service';
 import {
@@ -312,12 +315,6 @@ export class NotificationHandler {
   }
 
   private getWeekMonday(): Date {
-    const now = new Date();
-    const day = now.getUTCDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    const monday = new Date(now);
-    monday.setUTCDate(now.getUTCDate() + offset);
-    monday.setUTCHours(0, 0, 0, 0);
-    return monday;
+    return new Date(getLocalWeekMonday('Asia/Kolkata').getTime() - IST_OFFSET_MS);
   }
 }

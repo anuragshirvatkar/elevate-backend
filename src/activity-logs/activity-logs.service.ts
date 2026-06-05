@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getLocalToday } from '../utils/date.utils';
 
 const SECTIONS = ['power', 'mind', 'craft', 'purity'] as const;
 type Section = (typeof SECTIONS)[number];
@@ -11,18 +12,22 @@ export class ActivityLogsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getLast7Days(userId: string, today?: string): Promise<Record<string, unknown>> {
-    const referenceDate = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { created_at: true, timezone: true },
+    });
+
+    const referenceDate = today
+      ? new Date(`${today}T00:00:00.000Z`)
+      : getLocalToday(user?.timezone ?? 'Asia/Kolkata');
     const dates = this.buildLast7Dates(referenceDate);
     const startDate = new Date(dates[0]);
     const endDate = new Date(dates[dates.length - 1]);
     endDate.setUTCHours(23, 59, 59, 999);
 
-    const user = await this.prisma.users.findUnique({
-      where: { id: userId },
-      select: { created_at: true },
-    });
-
-    const userCreatedAt = user?.created_at ? user.created_at.toISOString().slice(0, 10) : null;
+    const userCreatedAt = user?.created_at
+      ? user.created_at.toLocaleDateString('sv-SE', { timeZone: user.timezone ?? 'Asia/Kolkata' })
+      : null;
 
     const rows = await this.prisma.user_activities.findMany({
       where: {

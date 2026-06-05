@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { isValidIanaTimezone } from '../utils/date.utils';
 
 const DEBOUNCE_MINUTES = 30;
 
@@ -7,9 +8,19 @@ const DEBOUNCE_MINUTES = 30;
 export class AppTrackingService {
   constructor(private prisma: PrismaService) {}
 
-  async recordAppOpen(userId: string): Promise<void> {
-    const debounceFrom = new Date(Date.now() - DEBOUNCE_MINUTES * 60 * 1000);
+  async recordAppOpen(userId: string, timezone?: string): Promise<void> {
+    const updates: Promise<unknown>[] = [];
 
+    if (timezone && isValidIanaTimezone(timezone)) {
+      updates.push(
+        this.prisma.users.update({
+          where: { id: userId },
+          data: { timezone },
+        }),
+      );
+    }
+
+    const debounceFrom = new Date(Date.now() - DEBOUNCE_MINUTES * 60 * 1000);
     const latest = await this.prisma.user_app_opens.findFirst({
       where: {
         user_id: userId,
@@ -18,13 +29,11 @@ export class AppTrackingService {
       orderBy: { opened_at: 'desc' },
     });
 
-    if (latest) {
-      return;
+    if (!latest) {
+      updates.push(this.prisma.user_app_opens.create({ data: { user_id: userId } }));
     }
 
-    await this.prisma.user_app_opens.create({
-      data: { user_id: userId },
-    });
+    await Promise.all(updates);
   }
 
   async getLastSeen(userId: string): Promise<Date | null> {

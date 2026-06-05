@@ -115,10 +115,10 @@ export class AchievementsService {
       }
 
       case AchievementSlugs.FIRST_FOCUS: {
-        const result = await this.prisma.user_activities.findFirst({
+        const count = await this.prisma.user_activities.count({
           where: { user_id: userId, section: 'craft', did_user_do: true, hours: { gte: 2 } },
         });
-        return result !== null;
+        return count >= 2;
       }
       case AchievementSlugs.LOCKED_IN:
         return currentStreak >= 3;
@@ -152,7 +152,7 @@ export class AchievementsService {
         const count = await this.prisma.user_activities.count({
           where: { user_id: userId, section: 'mind', did_user_do: true },
         });
-        return count >= 1;
+        return count >= 3;
       }
       case AchievementSlugs.THINKING_BEGINS:
       case AchievementSlugs.LEARNER:
@@ -173,7 +173,7 @@ export class AchievementsService {
       }
 
       case AchievementSlugs.DAY_ONE:
-        return currentStreak >= 1;
+        return currentStreak >= 3;
       case AchievementSlugs.HOLDING_LINE:
         return currentStreak >= 7;
       case AchievementSlugs.IN_CONTROL:

@@ -6,12 +6,19 @@ import Redis from 'ioredis';
 export class RedisService implements OnModuleInit, OnModuleDestroy {
   private client: Redis;
 
+  private readonly logger = new Logger(RedisService.name);
+
   constructor(private configService: ConfigService) {
     const redisUrl = this.configService.getOrThrow<string>('REDIS_URL');
-    this.client = new Redis(redisUrl, { lazyConnect: true });
+    this.client = new Redis(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times) => Math.min(times * 200, 5000),
+    });
+    this.client.on('error', (err) =>
+      this.logger.error(`Redis error: ${err.message}`),
+    );
   }
-
-  private readonly logger = new Logger(RedisService.name);
 
   async onModuleInit() {
     await this.client.connect();
@@ -28,6 +35,12 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     } else {
       await this.client.set(key, value);
     }
+  }
+
+  // Returns true if the key was set (first caller wins), false if it already existed.
+  async setNx(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.set(key, value, 'EX', ttlSeconds, 'NX');
+    return result === 'OK';
   }
 
   async get(key: string): Promise<string | null> {

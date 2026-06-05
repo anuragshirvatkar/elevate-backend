@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { getLocalWeekMonday, getLocalDateString } from '../utils/date.utils';
+
+// IST is UTC+5:30 with no DST. Subtract this to convert a naive IST midnight
+// (stored as UTC midnight) to the actual UTC timestamp of that IST midnight.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 
 export interface RankingItem {
   rank: number;
@@ -152,22 +157,20 @@ export class LeaderboardService {
   }
 
   getDateFilter(period: string): Record<string, unknown> {
-    const now = new Date();
     switch (period) {
       case 'weekly': {
-        const day = now.getUTCDay();
-        const offset = day === 0 ? -6 : 1 - day;
-        const monday = new Date(now);
-        monday.setUTCDate(now.getUTCDate() + offset);
-        monday.setUTCHours(0, 0, 0, 0);
+        // IST Monday 00:00 in actual UTC (getLocalWeekMonday returns naive UTC midnight → subtract IST offset)
+        const monday = new Date(getLocalWeekMonday('Asia/Kolkata').getTime() - IST_OFFSET_MS);
         return { created_at: { gte: monday } };
       }
       case 'monthly': {
-        const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+        const [year, month] = getLocalDateString('Asia/Kolkata').split('-').map(Number);
+        const start = new Date(Date.UTC(year, month - 1, 1) - IST_OFFSET_MS);
         return { created_at: { gte: start } };
       }
       case 'yearly': {
-        const start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+        const year = Number(getLocalDateString('Asia/Kolkata').split('-')[0]);
+        const start = new Date(Date.UTC(year, 0, 1) - IST_OFFSET_MS);
         return { created_at: { gte: start } };
       }
       default:

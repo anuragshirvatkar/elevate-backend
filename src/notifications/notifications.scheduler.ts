@@ -3,6 +3,12 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 import { NotificationTypes, COOLDOWN_TTL } from './constants/notification-types';
+import {
+  getLocalDateString,
+  getLocalToday,
+  getLocalWeekMonday,
+  getLocalMinuteOfDay,
+} from '../utils/date.utils';
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
@@ -51,32 +57,35 @@ export class NotificationsScheduler implements OnModuleInit {
     const now = new Date();
     this.logger.log(
       `[SETUP] NotificationsScheduler initialized. ` +
-      `Server local time: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST | ` +
-      `process.env.TZ=${process.env.TZ ?? '(not set)'} | ` +
-      `now.getHours()=${now.getHours()} now.getUTCHours()=${now.getUTCHours()}`,
+      `IST date: ${getLocalDateString('Asia/Kolkata')} | ` +
+      `IST time: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | ` +
+      `UTC: ${now.toISOString()}`,
     );
     this.logger.log(
       `[SETUP] Crons registered: checkActivityReminders (every :00/:30), ` +
-      `checkStreakAtRisk (22:00), checkBirthdays (09:00), ` +
-      `checkNearUnlock (19:00), checkInactivity (12:00), checkEodLogs (21:00)`,
+      `checkStreakAtRisk (22:00 IST), checkBirthdays (09:00 IST), ` +
+      `checkNearUnlock (19:00 IST), checkInactivity (12:00 IST), checkEodLogs (21:00 IST)`,
     );
   }
 
-  @Cron('0 9 * * *')
+  // Runs at 09:00 IST. For each user with a birthday matching their local today, send a notification.
+  @Cron('0 9 * * *', { timeZone: 'Asia/Kolkata' })
   async checkBirthdays(): Promise<void> {
-    const now = new Date();
-    const month = now.getUTCMonth() + 1;
-    const day = now.getUTCDate();
+    const users = await this.prisma.users.findMany({
+      where: { date_of_birth: { not: null }, onboarding_completed: true },
+      select: { id: true, date_of_birth: true, timezone: true },
+    });
 
-    const users = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM users
-      WHERE date_of_birth IS NOT NULL
-        AND EXTRACT(MONTH FROM date_of_birth) = ${month}
-        AND EXTRACT(DAY FROM date_of_birth) = ${day}
-        AND onboarding_completed = true
-    `;
-
+    let sent = 0;
     for (const user of users) {
+      if (!user.date_of_birth) continue;
+
+      const userDateStr = getLocalDateString(user.timezone);
+      const [, userMonth, userDay] = userDateStr.split('-').map(Number);
+      const dobMonth = user.date_of_birth.getUTCMonth() + 1;
+      const dobDay = user.date_of_birth.getUTCDate();
+      if (dobMonth !== userMonth || dobDay !== userDay) continue;
+
       const cooldown = await this.notificationsService.getCooldownData(
         user.id,
         NotificationTypes.BIRTHDAY,
@@ -97,19 +106,17 @@ export class NotificationsScheduler implements OnModuleInit {
         COOLDOWN_TTL[NotificationTypes.BIRTHDAY],
         { lastSent: new Date().toISOString() },
       );
+      sent++;
     }
 
-    if (users.length > 0) {
-      this.logger.log(`Birthday notifications sent: count=${users.length}`);
+    if (sent > 0) {
+      this.logger.log(`Birthday notifications sent: count=${sent}`);
     }
   }
 
-  @Cron('0 22 * * *')
+  @Cron('0 22 * * *', { timeZone: 'Asia/Kolkata' })
   async checkStreakAtRisk(): Promise<void> {
-    const today = this.getTodayUtc();
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const dayName = DAY_NAMES[today.getUTCDay()];
+    const timezoneMap = await this.buildTimezoneMap();
 
     const streaks = await this.prisma.user_streaks.findMany({
       where: {
@@ -121,6 +128,11 @@ export class NotificationsScheduler implements OnModuleInit {
 
     for (const streak of streaks) {
       const { user_id: userId, section, current_streak } = streak;
+      const userTz = timezoneMap.get(userId) ?? 'Asia/Kolkata';
+      const today = getLocalToday(userTz);
+      const tomorrow = new Date(today);
+      tomorrow.setUTCDate(today.getUTCDate() + 1);
+      const dayName = DAY_NAMES[today.getUTCDay()];
 
       const setup = await this.prisma.user_setups.findFirst({
         where: { user_id: userId, section },
@@ -173,20 +185,13 @@ export class NotificationsScheduler implements OnModuleInit {
   @Cron('0,30 * * * *')
   async checkActivityReminders(): Promise<void> {
     const now = new Date();
-    // preferred_time is stored as the user's local time (naively, without UTC conversion),
-    // so the window must be computed in server local time to match.
-    const windowStartMinutes = (now.getHours() * 60 + now.getMinutes() + 30) % 1440;
-    const windowEndMinutes = (now.getHours() * 60 + now.getMinutes() + 60) % 1440;
-
-    const windowStartStr = `${String(Math.floor(windowStartMinutes / 60)).padStart(2, '0')}:${String(windowStartMinutes % 60).padStart(2, '0')}`;
-    const windowEndStr = `${String(Math.floor(windowEndMinutes / 60)).padStart(2, '0')}:${String(windowEndMinutes % 60).padStart(2, '0')}`;
-
     this.logger.log(
       `[CRON RAN] checkActivityReminders fired. ` +
-      `Server local: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST | ` +
-      `getHours()=${now.getHours()} getUTCHours()=${now.getUTCHours()} | ` +
-      `window=[${windowStartStr}, ${windowEndStr})`,
+      `IST: ${now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} | ` +
+      `UTC: ${now.toISOString()}`,
     );
+
+    const timezoneMap = await this.buildTimezoneMap();
 
     const setups = await this.prisma.user_setups.findMany({
       where: {
@@ -199,12 +204,13 @@ export class NotificationsScheduler implements OnModuleInit {
 
     this.logger.log(`[CRON] checkActivityReminders: found ${setups.length} setup(s) with preferred_time`);
 
-    const today = this.getTodayUtc();
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-
     for (const setup of setups) {
       if (!setup.preferred_time) continue;
+
+      const userTz = timezoneMap.get(setup.user_id) ?? 'Asia/Kolkata';
+      const nowUserMinutes = getLocalMinuteOfDay(userTz);
+      const windowStartMinutes = (nowUserMinutes + 30) % 1440;
+      const windowEndMinutes = (nowUserMinutes + 60) % 1440;
 
       const prefMinutes = setup.preferred_time.getUTCHours() * 60 + setup.preferred_time.getUTCMinutes();
       const prefStr = `${String(setup.preferred_time.getUTCHours()).padStart(2, '0')}:${String(setup.preferred_time.getUTCMinutes()).padStart(2, '0')}`;
@@ -214,18 +220,21 @@ export class NotificationsScheduler implements OnModuleInit {
           : prefMinutes >= windowStartMinutes || prefMinutes < windowEndMinutes;
 
       this.logger.log(
-        `[CRON] setup userId=${setup.user_id} section=${setup.section} ` +
-        `prefTime=${prefStr}(${prefMinutes}min) window=[${windowStartStr}(${windowStartMinutes}), ${windowEndStr}(${windowEndMinutes})) ` +
-        `inWindow=${inWindow}`,
+        `[CRON] setup userId=${setup.user_id} section=${setup.section} tz=${userTz} ` +
+        `prefTime=${prefStr}(${prefMinutes}min) nowLocal=${nowUserMinutes}min inWindow=${inWindow}`,
       );
 
       if (!inWindow) continue;
+
+      const userToday = getLocalToday(userTz);
+      const userTomorrow = new Date(userToday);
+      userTomorrow.setUTCDate(userToday.getUTCDate() + 1);
 
       const alreadyLogged = await this.prisma.user_activities.findFirst({
         where: {
           user_id: setup.user_id,
           section: setup.section,
-          date: { gte: today, lt: tomorrow },
+          date: { gte: userToday, lt: userTomorrow },
           did_user_do: true,
         },
       });
@@ -264,11 +273,9 @@ export class NotificationsScheduler implements OnModuleInit {
     }
   }
 
-  @Cron('0 21 * * *')
+  @Cron('0 21 * * *', { timeZone: 'Asia/Kolkata' })
   async checkEodLogs(): Promise<void> {
-    const today = this.getTodayUtc();
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const timezoneMap = await this.buildTimezoneMap();
 
     const setups = await this.prisma.user_setups.findMany({
       where: { is_active: true, section: { in: ['power', 'craft', 'mind'] } },
@@ -287,6 +294,11 @@ export class NotificationsScheduler implements OnModuleInit {
         NotificationTypes.EOD_LOG_REMINDER,
       );
       if (cooldown) continue;
+
+      const userTz = timezoneMap.get(userId) ?? 'Asia/Kolkata';
+      const today = getLocalToday(userTz);
+      const tomorrow = new Date(today);
+      tomorrow.setUTCDate(today.getUTCDate() + 1);
 
       const loggedToday = await this.prisma.user_activities.findMany({
         where: {
@@ -328,34 +340,25 @@ export class NotificationsScheduler implements OnModuleInit {
     }
   }
 
-  @Cron('0 19 * * *')
+  @Cron('0 19 * * *', { timeZone: 'Asia/Kolkata' })
   async checkNearUnlock(): Promise<void> {
-    const today = this.getTodayUtc();
-    const tomorrow = new Date(today);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    const weekStart = this.getWeekMonday();
+    const timezoneMap = await this.buildTimezoneMap();
 
     for (const [section, config] of Object.entries(AVATAR_SECTION_CONFIG)) {
-      await this.checkNearAvatarUnlock(section, config, today, tomorrow, weekStart);
+      await this.checkNearAvatarUnlock(section, config, timezoneMap);
     }
 
-    await this.checkNearAchievementUnlock(today, tomorrow);
+    await this.checkNearAchievementUnlock(timezoneMap);
   }
 
-  @Cron('0 12 * * *')
+  @Cron('0 12 * * *', { timeZone: 'Asia/Kolkata' })
   async checkInactivity(): Promise<void> {
-    const fourDaysAgo = new Date();
-    fourDaysAgo.setUTCDate(fourDaysAgo.getUTCDate() - 4);
-    fourDaysAgo.setUTCHours(0, 0, 0, 0);
+    const timezoneMap = await this.buildTimezoneMap();
 
-    const [activeUsers, recentlyActiveRows, everActiveRows] = await Promise.all([
+    const [activeUsers, everActiveRows] = await Promise.all([
       this.prisma.users.findMany({
         where: { onboarding_completed: true },
         select: { id: true },
-      }),
-      this.prisma.user_activities.groupBy({
-        by: ['user_id'],
-        where: { did_user_do: true, date: { gte: fourDaysAgo } },
       }),
       this.prisma.user_activities.groupBy({
         by: ['user_id'],
@@ -363,12 +366,21 @@ export class NotificationsScheduler implements OnModuleInit {
       }),
     ]);
 
-    const recentlyActiveSet = new Set(recentlyActiveRows.map((r) => r.user_id));
     const everActiveSet = new Set(everActiveRows.map((r) => r.user_id));
 
     for (const user of activeUsers) {
-      if (recentlyActiveSet.has(user.id)) continue;
       if (!everActiveSet.has(user.id)) continue;
+
+      const userTz = timezoneMap.get(user.id) ?? 'Asia/Kolkata';
+      const userToday = getLocalToday(userTz);
+      const fourDaysAgo = new Date(userToday);
+      fourDaysAgo.setUTCDate(userToday.getUTCDate() - 4);
+
+      const recentActivity = await this.prisma.user_activities.findFirst({
+        where: { user_id: user.id, did_user_do: true, date: { gte: fourDaysAgo } },
+        select: { id: true },
+      });
+      if (recentActivity) continue;
 
       const cooldown = await this.notificationsService.getCooldownData(
         user.id,
@@ -396,9 +408,7 @@ export class NotificationsScheduler implements OnModuleInit {
   private async checkNearAvatarUnlock(
     section: string,
     config: { slug: string; threshold: number; label: string },
-    today: Date,
-    tomorrow: Date,
-    weekStart: Date,
+    timezoneMap: Map<string, string>,
   ): Promise<void> {
     const avatar = await this.prisma.avatars.findUnique({ where: { slug: config.slug } });
     if (!avatar) return;
@@ -410,6 +420,11 @@ export class NotificationsScheduler implements OnModuleInit {
 
     for (const setup of setups) {
       const userId = setup.user_id;
+      const userTz = timezoneMap.get(userId) ?? 'Asia/Kolkata';
+      const today = getLocalToday(userTz);
+      const tomorrow = new Date(today);
+      tomorrow.setUTCDate(today.getUTCDate() + 1);
+      const weekStart = getLocalWeekMonday(userTz);
 
       const alreadyUnlocked = await this.prisma.user_avatars.findFirst({
         where: { user_id: userId, avatar_id: avatar.id, is_unlocked: true },
@@ -457,7 +472,7 @@ export class NotificationsScheduler implements OnModuleInit {
     }
   }
 
-  private async checkNearAchievementUnlock(today: Date, tomorrow: Date): Promise<void> {
+  private async checkNearAchievementUnlock(timezoneMap: Map<string, string>): Promise<void> {
     for (const [section, achievements] of Object.entries(STREAK_ACHIEVEMENT_CONFIG)) {
       const streaks = await this.prisma.user_streaks.findMany({
         where: { section },
@@ -466,6 +481,10 @@ export class NotificationsScheduler implements OnModuleInit {
 
       for (const streak of streaks) {
         const { user_id: userId, current_streak } = streak;
+        const userTz = timezoneMap.get(userId) ?? 'Asia/Kolkata';
+        const today = getLocalToday(userTz);
+        const tomorrow = new Date(today);
+        tomorrow.setUTCDate(today.getUTCDate() + 1);
 
         if (section === 'mind') {
           const mindSetup = await this.prisma.user_setups.findUnique({
@@ -521,6 +540,14 @@ export class NotificationsScheduler implements OnModuleInit {
     }
   }
 
+  private async buildTimezoneMap(): Promise<Map<string, string>> {
+    const users = await this.prisma.users.findMany({
+      where: { onboarding_completed: true },
+      select: { id: true, timezone: true },
+    });
+    return new Map(users.map(u => [u.id, u.timezone]));
+  }
+
   private buildActivityReminderMessage(
     section: string,
     activityName: string | null,
@@ -559,21 +586,5 @@ export class NotificationsScheduler implements OnModuleInit {
     }
 
     return { title: 'Reminder', body: `Your ${activity} session is coming up.` };
-  }
-
-  private getTodayUtc(): Date {
-    const d = new Date();
-    d.setUTCHours(0, 0, 0, 0);
-    return d;
-  }
-
-  private getWeekMonday(): Date {
-    const now = new Date();
-    const day = now.getUTCDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    const monday = new Date(now);
-    monday.setUTCDate(now.getUTCDate() + offset);
-    monday.setUTCHours(0, 0, 0, 0);
-    return monday;
   }
 }

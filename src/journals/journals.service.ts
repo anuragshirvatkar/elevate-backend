@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
+import { getLocalToday } from '../utils/date.utils';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertJournalDto } from './dto/upsert-journal.dto';
@@ -110,8 +111,16 @@ export class JournalsService {
   }
 
   async getToday(userId: string, today?: string): Promise<Omit<JournalEntry, 'pointsEarned'> | null> {
-    const date = today ? new Date(`${today}T00:00:00.000Z`) : new Date();
-    date.setUTCHours(0, 0, 0, 0);
+    let date: Date;
+    if (today) {
+      date = new Date(`${today}T00:00:00.000Z`);
+    } else {
+      const user = await this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { timezone: true },
+      });
+      date = getLocalToday(user?.timezone ?? 'Asia/Kolkata');
+    }
 
     const entry = await this.prisma.journals.findUnique({
       where: { user_id_date: { user_id: userId, date } },

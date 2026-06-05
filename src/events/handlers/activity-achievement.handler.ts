@@ -34,13 +34,7 @@ export class ActivityAchievementHandler {
     const [activity, streak] = await Promise.all([
       this.prisma.user_activities.findUnique({
         where: { id: activityLogId },
-        select: {
-          did_user_do: true,
-          relapse_count: true,
-          date: true,
-          hours: true,
-          user_book_id: true,
-        },
+        select: { did_user_do: true, relapse_count: true },
       }),
       this.prisma.user_streaks.findUnique({
         where: { user_id_section: { user_id: userId, section } },
@@ -56,14 +50,10 @@ export class ActivityAchievementHandler {
 
     switch (section) {
       case 'power':
-        await this.checkPowerAchievements(userId, activity.date, currentStreak);
+        await this.checkPowerAchievements(userId, currentStreak);
         break;
       case 'craft':
-        await this.checkCraftAchievements(
-          userId,
-          activity.hours != null ? Number(activity.hours) : null,
-          currentStreak,
-        );
+        await this.checkCraftAchievements(userId, currentStreak);
         break;
       case 'mind': {
         const mindSetup = await this.prisma.user_setups.findUnique({
@@ -83,7 +73,6 @@ export class ActivityAchievementHandler {
 
   private async checkPowerAchievements(
     userId: string,
-    activityDate: Date,
     currentStreak: number,
   ): Promise<void> {
     const setup = await this.prisma.user_setups.findFirst({
@@ -94,8 +83,6 @@ export class ActivityAchievementHandler {
     const restDays: string[] = Array.isArray(setup?.rest_days)
       ? (setup.rest_days as string[])
       : [];
-    const dayName = DAY_NAMES[activityDate.getUTCDay()];
-    const isRestDay = restDays.includes(dayName);
 
     const slugs: string[] = [AchievementSlugs.FIRST_BLOOD];
 
@@ -104,28 +91,42 @@ export class ActivityAchievementHandler {
     if (currentStreak >= 20) slugs.push(AchievementSlugs.IRON_DISCIPLINE);
     if (currentStreak >= 30) slugs.push(AchievementSlugs.UNBREAKABLE_ROUTINE);
     if (currentStreak >= 100) slugs.push(AchievementSlugs.BUILT_DIFFERENT);
-    if (isRestDay) slugs.push(AchievementSlugs.BEYOND_EXCUSES);
+
+    // Beyond Excuses: worked out on a configured rest day at least twice
+    if (restDays.length > 0) {
+      const allPowerLogs = await this.prisma.user_activities.findMany({
+        where: { user_id: userId, section: 'power', did_user_do: true },
+        select: { date: true },
+      });
+      const restDayWorkouts = allPowerLogs.filter((a) =>
+        restDays.includes(DAY_NAMES[a.date.getUTCDay()]),
+      ).length;
+      if (restDayWorkouts >= 2) slugs.push(AchievementSlugs.BEYOND_EXCUSES);
+    }
 
     await this.tryUnlock(userId, slugs);
   }
 
   private async checkCraftAchievements(
     userId: string,
-    hours: number | null,
     currentStreak: number,
   ): Promise<void> {
-    const totalResult = await this.prisma.user_activities.aggregate({
-      where: { user_id: userId, section: 'craft', did_user_do: true },
-      _sum: { hours: true },
-    });
+    const [totalResult, focusSessionCount] = await Promise.all([
+      this.prisma.user_activities.aggregate({
+        where: { user_id: userId, section: 'craft', did_user_do: true },
+        _sum: { hours: true },
+      }),
+      // First Focus: requires 2 separate sessions of 2+ hours each
+      this.prisma.user_activities.count({
+        where: { user_id: userId, section: 'craft', did_user_do: true, hours: { gte: 2 } },
+      }),
+    ]);
 
     const totalHours = totalResult._sum.hours != null ? Number(totalResult._sum.hours) : 0;
 
     const slugs: string[] = [];
 
-    if (hours !== null && hours >= 2) {
-      slugs.push(AchievementSlugs.FIRST_FOCUS);
-    }
+    if (focusSessionCount >= 2) slugs.push(AchievementSlugs.FIRST_FOCUS);
     if (currentStreak >= 3) slugs.push(AchievementSlugs.LOCKED_IN);
     if (currentStreak >= 5) slugs.push(AchievementSlugs.NO_DISTRACTIONS);
     if (totalHours >= 10) slugs.push(AchievementSlugs.DEEP_WORKER);
@@ -140,12 +141,17 @@ export class ActivityAchievementHandler {
     userId: string,
     currentStreak: number,
   ): Promise<void> {
-    const completedBooksCount = await this.prisma.user_books.count({
-      where: { user_id: userId, is_completed: true },
-    });
+    const [completedBooksCount, totalMindSessions] = await Promise.all([
+      this.prisma.user_books.count({ where: { user_id: userId, is_completed: true } }),
+      // Opened the Book: requires 3 completed mind sessions (not just day 1)
+      this.prisma.user_activities.count({
+        where: { user_id: userId, section: 'mind', did_user_do: true },
+      }),
+    ]);
 
-    const slugs: string[] = [AchievementSlugs.OPENED_THE_BOOK];
+    const slugs: string[] = [];
 
+    if (totalMindSessions >= 3) slugs.push(AchievementSlugs.OPENED_THE_BOOK);
     if (currentStreak >= 3) {
       slugs.push(AchievementSlugs.THINKING_BEGINS, AchievementSlugs.LEARNER);
     }
@@ -160,8 +166,9 @@ export class ActivityAchievementHandler {
     userId: string,
     currentStreak: number,
   ): Promise<void> {
-    const slugs: string[] = [AchievementSlugs.DAY_ONE];
+    const slugs: string[] = [];
 
+    if (currentStreak >= 3) slugs.push(AchievementSlugs.DAY_ONE);
     if (currentStreak >= 7) slugs.push(AchievementSlugs.HOLDING_LINE);
     if (currentStreak >= 15) slugs.push(AchievementSlugs.IN_CONTROL);
     if (currentStreak >= 30) slugs.push(AchievementSlugs.STRONG_MIND);

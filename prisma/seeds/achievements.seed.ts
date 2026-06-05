@@ -98,7 +98,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Beyond Excuses',
       slug: 'beyond-excuses',
-      description: 'Workout on rest day',
+      description: 'Workout on a rest day twice',
       section: 'power',
 
       icon_url:
@@ -106,6 +106,7 @@ export async function seedAchievements(prisma: PrismaClient) {
 
       condition: {
         type: 'workout_on_rest_day',
+        count: 2,
       },
     },
 
@@ -129,7 +130,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'First Focus',
       slug: 'first-focus',
-      description: 'First 2h work session',
+      description: 'Two 2h+ work sessions',
       section: 'craft',
 
       icon_url:
@@ -138,6 +139,7 @@ export async function seedAchievements(prisma: PrismaClient) {
       condition: {
         type: 'work_session_hours',
         hours: 2,
+        count: 2,
       },
     },
 
@@ -236,7 +238,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Opened the Book',
       slug: 'opened-the-book',
-      description: 'First reading',
+      description: '3 reading sessions',
       section: 'mind',
 
       icon_url:
@@ -244,7 +246,7 @@ export async function seedAchievements(prisma: PrismaClient) {
 
       condition: {
         type: 'reading_days',
-        days: 1,
+        days: 3,
       },
     },
 
@@ -332,7 +334,7 @@ condition:{
     {
       name: 'Day One',
       slug: 'day-one',
-      description: '1 clean day',
+      description: '3-day clean streak',
       section: 'purity',
 
       icon_url:
@@ -340,7 +342,7 @@ condition:{
 
       condition: {
         type: 'purity_streak',
-        days: 1,
+        days: 3,
       },
     },
 
@@ -438,20 +440,17 @@ condition:{
   ];
 
   for (const achievement of achievements) {
-    const existing = await prisma.achievements.findFirst({
-      where: {
-        slug: achievement.slug,
+    await prisma.achievements.upsert({
+      where: { slug: achievement.slug },
+      create: { ...achievement, created_at: new Date() },
+      update: {
+        name: achievement.name,
+        description: achievement.description,
+        condition: achievement.condition,
+        icon_url: achievement.icon_url,
+        section: achievement.section,
       },
     });
-
-    if (!existing) {
-      await prisma.achievements.create({
-        data: {
-          ...achievement,
-          created_at: new Date(),
-        },
-      });
-    }
   }
 
   console.log('✅ Achievements seeded');
