@@ -3,6 +3,8 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from './notifications.service';
 import { NotificationTypes, COOLDOWN_TTL } from './constants/notification-types';
+import { CompanionMessagesService } from '../companion-messages/companion-messages.service';
+import { CompanionMessageType } from '../companion-messages/companion-message-types';
 import {
   getLocalDateString,
   getLocalToday,
@@ -51,6 +53,7 @@ export class NotificationsScheduler implements OnModuleInit {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private companionMessagesService: CompanionMessagesService,
   ) {}
 
   onModuleInit() {
@@ -66,9 +69,26 @@ export class NotificationsScheduler implements OnModuleInit {
       `checkStreakAtRisk (22:00 IST), checkBirthdays (09:00 IST), ` +
       `checkNearUnlock (19:00 IST), checkInactivity (12:00 IST), checkEodLogs (21:00 IST)`,
     );
+
   }
 
-  // Runs at 09:00 IST. For each user with a birthday matching their local today, send a notification.
+  private async getActiveCompanion(userId: string): Promise<{ name: string; imageUrl: string | null }> {
+    const uc = await this.prisma.user_companions.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: { companion: { select: { name: true, image_url: true } } },
+    });
+    return { name: uc?.companion.name ?? 'Your Guide', imageUrl: uc?.companion.image_url ?? null };
+  }
+
+  private static readonly BIRTHDAY_MESSAGES = [
+    'Another year done. Most people waste them — not you. You\'re here, building yourself. Keep going.',
+    'Today marks another year of your life. Make sure this one counts more than the last.',
+    'You\'re another year older. And if you\'ve been showing up, you\'re another year stronger.',
+    'The candles on the cake don\'t matter. What matters is the person you\'re becoming. Keep building.',
+    'Another year around the sun. Every day you showed up counted. Now make the next one count too.',
+  ];
+
+  // Runs at 09:00 IST. For each user with a birthday matching their local today, send notification + companion message.
   @Cron('0 9 * * *', { timeZone: 'Asia/Kolkata' })
   async checkBirthdays(): Promise<void> {
     const users = await this.prisma.users.findMany({
@@ -92,12 +112,27 @@ export class NotificationsScheduler implements OnModuleInit {
       );
       if (cooldown) continue;
 
-      await this.notificationsService.sendNotification(
-        user.id,
-        NotificationTypes.BIRTHDAY,
-        'Happy Birthday 🎉',
-        'Another year, another chance to become stronger.',
-      );
+      const companion = await this.getActiveCompanion(user.id);
+      const msg = NotificationsScheduler.BIRTHDAY_MESSAGES[
+        Math.floor(Math.random() * NotificationsScheduler.BIRTHDAY_MESSAGES.length)
+      ];
+
+      await Promise.all([
+        this.notificationsService.sendNotification(
+          user.id,
+          NotificationTypes.BIRTHDAY,
+          'Happy Birthday 🎉',
+          'Another year, another chance to become stronger.',
+        ),
+        this.companionMessagesService.createMessage({
+          userId: user.id,
+          type: CompanionMessageType.BIRTHDAY,
+          companionName: companion.name,
+          title: 'Happy Birthday',
+          message: msg,
+          metadata: companion.imageUrl ? { companionImageUrl: companion.imageUrl } : undefined,
+        }),
+      ]);
 
       await this.notificationsService.setCooldown(
         user.id,
@@ -110,7 +145,7 @@ export class NotificationsScheduler implements OnModuleInit {
     }
 
     if (sent > 0) {
-      this.logger.log(`Birthday notifications sent: count=${sent}`);
+      this.logger.log(`Birthday wishes sent: count=${sent}`);
     }
   }
 

@@ -90,6 +90,15 @@ export class AuthService {
   }
 
   async requestOtp(email: string): Promise<void> {
+    const testEmail = this.configService.get<string>('TEST_REVIEWER_EMAIL');
+    const testOtp = this.configService.get<string>('TEST_REVIEWER_OTP');
+
+    // Play Store reviewer account: fixed OTP, no email sent
+    if (testEmail && testOtp && email === testEmail) {
+      await this.redis.set(`otp:hash:${email}`, this.hashToken(testOtp), OTP_TTL_SECONDS);
+      return;
+    }
+
     const rateLimitKey = `otp:rate:${email}`;
     const client = this.redis.getClient();
 

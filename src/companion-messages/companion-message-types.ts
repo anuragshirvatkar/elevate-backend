@@ -11,6 +11,7 @@ export const CompanionMessageType = {
   MIND_SKIPPED: 'MIND_SKIPPED',
   MIND_ACTIVATED: 'MIND_ACTIVATED',
   MIND_PAUSED: 'MIND_PAUSED',
+  BIRTHDAY: 'BIRTHDAY',
 } as const;
 
 export type CompanionMessageType =

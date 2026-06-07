@@ -228,8 +228,8 @@ export class StatsService {
     for (const row of rows) {
       if (row.did_user_do) {
         completedDates.add(row.date.toISOString().slice(0, 10));
+        if (row.hours) totalHours += Number(row.hours);
       }
-      if (row.hours) totalHours += Number(row.hours);
       if (row.activity_id) {
         activityMap.set(row.activity_id, (activityMap.get(row.activity_id) ?? 0) + (row.did_user_do ? 1 : 0));
       }
@@ -316,8 +316,8 @@ export class StatsService {
     for (const row of rows) {
       if (row.did_user_do) {
         completedDates.add(row.date.toISOString().slice(0, 10));
+        if (row.hours) totalHours += Number(row.hours);
       }
-      if (row.hours) totalHours += Number(row.hours);
       if (row.activity_id) {
         activityMap.set(row.activity_id, (activityMap.get(row.activity_id) ?? 0) + (row.did_user_do ? 1 : 0));
       }

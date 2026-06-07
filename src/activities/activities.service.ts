@@ -189,7 +189,8 @@ export class ActivitiesService {
 
       const updateData: Record<string, unknown> = {};
       if (dto.didUserDo !== undefined) updateData.did_user_do = dto.didUserDo;
-      if (dto.hours !== undefined) updateData.hours = dto.hours;
+      if (dto.didUserDo === false) updateData.hours = null;
+      else if (dto.hours !== undefined) updateData.hours = dto.hours;
       if (dto.relapseCount !== undefined) updateData.relapse_count = dto.relapseCount;
       if (dto.description !== undefined) updateData.description = dto.description;
       if (dto.reasonIfNo !== undefined) updateData.reason_if_no = dto.reasonIfNo;
@@ -270,6 +271,20 @@ export class ActivitiesService {
       select: { rest_days: true },
     });
 
+    let isSecondActivity = false;
+    if ((dto.section === 'power' || dto.section === 'craft') && dto.activityId) {
+      const otherCount = await this.prisma.user_activities.count({
+        where: {
+          user_id: userId,
+          section: dto.section,
+          date: activityDate,
+          id: { not: record.id },
+          did_user_do: true,
+        },
+      });
+      isSecondActivity = otherCount > 0;
+    }
+
     const points = this.calculatePoints({
       section: dto.section,
       didUserDo: activity?.did_user_do ?? null,
@@ -278,6 +293,7 @@ export class ActivitiesService {
       hasDescription: !!(activity?.description && activity.description.trim()),
       date: activity?.date ?? activityDate,
       restDays: Array.isArray(setup?.rest_days) ? (setup.rest_days as string[]) : [],
+      isSecondActivity,
     });
 
     return {
@@ -296,8 +312,9 @@ export class ActivitiesService {
     hasDescription: boolean;
     date: Date;
     restDays: string[];
+    isSecondActivity?: boolean;
   }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays } = params;
+    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, isSecondActivity = false } = params;
 
     const dayName = DAY_NAMES[date.getDay()];
     const isRestDay = restDays.includes(dayName);
@@ -306,6 +323,7 @@ export class ActivitiesService {
       case 'power':
       case 'mind': {
         if (!didUserDo) return 0;
+        if (isSecondActivity) return 5;
         let pts = 10;
         if (hasDescription) pts += 2;
         if (isRestDay) pts += 15;
@@ -314,6 +332,7 @@ export class ActivitiesService {
 
       case 'craft': {
         if (!didUserDo) return 0;
+        if (isSecondActivity) return 5;
         let pts = 10;
         if (hours != null && hours > 2) {
           const extraHours = Math.floor(hours - 2);
@@ -346,7 +365,11 @@ export class ActivitiesService {
 
     const logs = await this.prisma.user_activities.findMany({
       where: { user_id: userId, date: activityDate },
-      include: { activity_images: { select: { image_url: true } } },
+      include: {
+        activity_images: { select: { image_url: true } },
+        user_book: { select: { title: true } },
+        activity: { select: { name: true } },
+      },
       orderBy: { created_at: 'asc' },
     });
 
@@ -354,7 +377,9 @@ export class ActivitiesService {
       id: log.id,
       section: log.section,
       activityId: log.activity_id ?? undefined,
+      activityName: log.activity?.name ?? undefined,
       userBookId: log.user_book_id ?? undefined,
+      bookTitle: log.user_book?.title ?? undefined,
       didUserDo: log.did_user_do ?? undefined,
       hours: log.hours != null ? Number(log.hours) : undefined,
       relapseCount: log.relapse_count ?? undefined,

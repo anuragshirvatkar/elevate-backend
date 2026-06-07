@@ -98,6 +98,8 @@ export class NotificationsService {
         title: fullTitle,
         body,
         data: { type, ...payload, companionImageUrl },
+        channelId: 'elevate_v2',
+        priority: 'high' as const,
         ...(companionImageUrl ? { imageUrl: companionImageUrl } : {}),
       } as ExpoPushMessage));
 

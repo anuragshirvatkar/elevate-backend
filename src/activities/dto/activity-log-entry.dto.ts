@@ -10,8 +10,14 @@ export class ActivityLogEntryDto {
   @ApiPropertyOptional({ example: 'uuid-of-activity' })
   activityId?: string;
 
+  @ApiPropertyOptional({ example: 'Gym' })
+  activityName?: string;
+
   @ApiPropertyOptional({ example: 'uuid-of-user-book' })
   userBookId?: string;
+
+  @ApiPropertyOptional({ example: 'Atomic Habits' })
+  bookTitle?: string;
 
   @ApiPropertyOptional({ example: true })
   didUserDo?: boolean;

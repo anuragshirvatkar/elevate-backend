@@ -17,6 +17,7 @@ const DEDUP_TTL: Partial<Record<CompanionMessageType, number>> = {
   [CompanionMessageType.ACHIEVEMENT]: 60,          // 60 s — entity-keyed, just stops double-fires
   [CompanionMessageType.AVATAR_UNLOCKED]: 60,
   [CompanionMessageType.AVATAR_REVOKED]: 60,
+  [CompanionMessageType.BIRTHDAY]: 86400 * 365,   // once a year
 };
 
 export interface CreateMessageInput {

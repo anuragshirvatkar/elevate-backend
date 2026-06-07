@@ -169,10 +169,14 @@ export class EditProfileService {
         };
       });
 
-    if (newCompanionName) {
+    if (newCompanionName && dto.companionId) {
       const msg = previousCompanionName
         ? `You decided to let ${previousCompanionName} rest. I'll walk beside you from here.`
         : `I'll walk beside you from here.`;
+      const companionRecord = await this.prisma.companions.findUnique({
+        where: { id: dto.companionId },
+        select: { image_url: true },
+      });
       await this.prisma.user_companion_messages.create({
         data: {
           user_id: userId,
@@ -180,6 +184,7 @@ export class EditProfileService {
           companion_name: newCompanionName,
           title: 'New Guide',
           message: msg,
+          metadata: companionRecord?.image_url ? { companionImageUrl: companionRecord.image_url } : undefined,
         },
       });
     }

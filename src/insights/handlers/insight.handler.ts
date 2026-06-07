@@ -16,27 +16,39 @@ export class InsightHandler {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  private async getActiveCompanion(userId: string): Promise<{ name: string; imageUrl: string | null }> {
+    const uc = await this.prisma.user_companions.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: { companion: { select: { name: true, image_url: true } } },
+    });
+    return { name: uc?.companion.name ?? 'Your Guide', imageUrl: uc?.companion.image_url ?? null };
+  }
+
   async handle(userId: string, aiResponse: InsightAIResponse): Promise<void> {
     const now = new Date();
 
-    await this.prisma.user_insights.create({
-      data: {
-        user_id: userId,
-        type: aiResponse.category,
-        insight_text: aiResponse.companionMessage,
-        reference_date: now,
-        created_at: now,
-      },
-    });
+    const [companion] = await Promise.all([
+      this.getActiveCompanion(userId),
+      this.prisma.user_insights.create({
+        data: {
+          user_id: userId,
+          type: aiResponse.category,
+          insight_text: aiResponse.companionMessage,
+          reference_date: now,
+          created_at: now,
+        },
+      }),
+    ]);
 
     await this.companionMessagesService.createMessage({
       userId,
       type: CompanionMessageType.INSIGHT,
-      companionName: 'Riven',
+      companionName: companion.name,
       title: aiResponse.companionIntro,
       message: aiResponse.companionMessage,
       entityType: 'insight',
       action: aiResponse.category,
+      metadata: companion.imageUrl ? { companionImageUrl: companion.imageUrl } : undefined,
     });
 
     await this.notificationsService.sendNotification(

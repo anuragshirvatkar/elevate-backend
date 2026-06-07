@@ -146,7 +146,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Locked In',
       slug: 'locked-in',
-      description: '3-day streak',
+      description: '3-day craft streak',
       section: 'craft',
 
       icon_url:
@@ -161,7 +161,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Deep Worker',
       slug: 'deep-worker',
-      description: '10 total hours',
+      description: '10 total craft hours',
       section: 'craft',
 
       icon_url:
@@ -176,7 +176,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'No Distractions',
       slug: 'no-distractions',
-      description: '5-day streak',
+      description: '5-day craft streak',
       section: 'craft',
 
       icon_url:
@@ -191,7 +191,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Relentless',
       slug: 'relentless',
-      description: '30 total hours',
+      description: '30 total craft hours',
       section: 'craft',
 
       icon_url:
@@ -206,7 +206,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Obsessed',
       slug: 'obsessed',
-      description: '50 total hours',
+      description: '50 total craft hours',
       section: 'craft',
 
       icon_url:
@@ -221,7 +221,7 @@ export async function seedAchievements(prisma: PrismaClient) {
     {
       name: 'Machine Mode',
       slug: 'machine-mode',
-      description: '30-day streak',
+      description: '30-day craft streak',
       section: 'craft',
 
       icon_url:
@@ -317,7 +317,7 @@ condition:{
     {
       name: 'Evolving Mind',
       slug: 'evolving-mind',
-      description: '3 books',
+      description: '3 books completed',
       section: 'mind',
 
       icon_url:
@@ -334,7 +334,7 @@ condition:{
     {
       name: 'Day One',
       slug: 'day-one',
-      description: '3-day clean streak',
+      description: '3-day purity streak',
       section: 'purity',
 
       icon_url:
@@ -349,7 +349,7 @@ condition:{
     {
       name: 'Holding Line',
       slug: 'holding-line',
-      description: '7-day streak',
+      description: '7-day purity streak',
       section: 'purity',
 
       icon_url:
@@ -364,7 +364,7 @@ condition:{
     {
       name: 'In Control',
       slug: 'in-control',
-      description: '15-day streak',
+      description: '15-day purity streak',
       section: 'purity',
 
       icon_url:
@@ -379,7 +379,7 @@ condition:{
     {
       name: 'Strong Mind',
       slug: 'strong-mind',
-      description: '30-day streak',
+      description: '30-day purity streak',
       section: 'purity',
 
       icon_url:
@@ -394,7 +394,7 @@ condition:{
     {
       name: 'Discipline Wins',
       slug: 'discipline-wins',
-      description: '60-day streak',
+      description: '60-day purity streak',
       section: 'purity',
 
       icon_url:
@@ -409,7 +409,7 @@ condition:{
     {
       name: 'Rare Breed',
       slug: 'rare-breed',
-      description: '90-day streak',
+      description: '90-day purity streak',
       section: 'purity',
 
       icon_url:

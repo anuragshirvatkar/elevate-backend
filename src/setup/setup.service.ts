@@ -45,6 +45,14 @@ export class SetupService {
     private companionMessagesService: CompanionMessagesService,
   ) {}
 
+  private async getActiveCompanion(userId: string): Promise<{ name: string; imageUrl: string | null }> {
+    const uc = await this.prisma.user_companions.findFirst({
+      where: { user_id: userId, is_active: true },
+      include: { companion: { select: { name: true, image_url: true } } },
+    });
+    return { name: uc?.companion.name ?? 'Your Guide', imageUrl: uc?.companion.image_url ?? null };
+  }
+
   async getOptions(): Promise<SetupOptionsResponseDto> {
     const [companions, activities, books] = await Promise.all([
       this.prisma.companions.findMany({
@@ -289,12 +297,14 @@ export class SetupService {
             });
 
             if (!existingMindSkipped) {
+              const companion = await this.getActiveCompanion(userId);
               await this.companionMessagesService.createMessage({
                 userId,
                 type: CompanionMessageType.MIND_SKIPPED,
-                companionName: 'Riven',
+                companionName: companion.name,
                 title: 'Mind Paused',
                 message: 'No problem. We will leave the shelves untouched for now.',
+                metadata: companion.imageUrl ? { companionImageUrl: companion.imageUrl } : undefined,
               });
             }
           } else {
@@ -407,7 +417,7 @@ export class SetupService {
       throw new BadRequestException('Date of birth is required to complete onboarding.');
     }
 
-    const [companion, powerSetup, craftSetup, mindSetup] = await Promise.all([
+    const [companionExists, powerSetup, craftSetup, mindSetup] = await Promise.all([
       this.prisma.user_companions.findFirst({
         where: { user_id: userId, is_active: true },
       }),
@@ -425,7 +435,7 @@ export class SetupService {
       }),
     ]);
 
-    if (!companion) {
+    if (!companionExists) {
       throw new BadRequestException('A companion must be selected to complete onboarding.');
     }
     if (!powerSetup || powerSetup._count.user_setup_activities < 1) {
@@ -463,16 +473,20 @@ export class SetupService {
       iconUrl = achievement?.icon_url;
     }
 
+    const companion = await this.getActiveCompanion(userId);
     await this.companionMessagesService.createMessage({
       userId,
       type: AchievementMessages.NEW_JOURNEY_BEGINS.type,
-      companionName: 'Riven',
+      companionName: companion.name,
       title: AchievementMessages.NEW_JOURNEY_BEGINS.title,
       message: AchievementMessages.NEW_JOURNEY_BEGINS.message,
       entityType: 'achievement',
       entityId: achievementId,
       action: 'open_achievement',
-      metadata: iconUrl ? { imageUrl: iconUrl } : undefined,
+      metadata: {
+        ...(iconUrl ? { imageUrl: iconUrl } : {}),
+        ...(companion.imageUrl ? { companionImageUrl: companion.imageUrl } : {}),
+      },
     });
 
     return { success: true, message: 'Onboarding completed successfully' };
@@ -778,20 +792,24 @@ export class SetupService {
     }
 
     if (activating && !previouslyActive) {
+      const companion = await this.getActiveCompanion(userId);
       await this.companionMessagesService.createMessage({
         userId,
         type: CompanionMessageType.MIND_ACTIVATED,
-        companionName: 'Riven',
+        companionName: companion.name,
         title: 'Mind Awakened',
         message: 'You opened the gate again. Knowledge begins moving once more.',
+        metadata: companion.imageUrl ? { companionImageUrl: companion.imageUrl } : undefined,
       });
     } else if (deactivating && previouslyActive) {
+      const companion = await this.getActiveCompanion(userId);
       await this.companionMessagesService.createMessage({
         userId,
         type: CompanionMessageType.MIND_PAUSED,
-        companionName: 'Riven',
+        companionName: companion.name,
         title: 'Mind Paused',
         message: 'The books can rest for now. The path remains here when you return.',
+        metadata: companion.imageUrl ? { companionImageUrl: companion.imageUrl } : undefined,
       });
     }
 
