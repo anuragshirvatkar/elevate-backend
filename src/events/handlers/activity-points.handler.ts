@@ -44,6 +44,20 @@ export class ActivityPointsHandler {
       return;
     }
 
+    let isSecondActivity = false;
+    if (section === 'power' || section === 'craft') {
+      const sameDayCount = await this.prisma.user_activities.count({
+        where: {
+          user_id: userId,
+          section,
+          date: activity.date,
+          did_user_do: true,
+          id: { not: activityLogId },
+        },
+      });
+      isSecondActivity = sameDayCount >= 1;
+    }
+
     const restDays: string[] = Array.isArray(setup?.rest_days)
       ? (setup.rest_days as string[])
       : [];
@@ -56,6 +70,7 @@ export class ActivityPointsHandler {
       hasDescription: !!(activity.description && activity.description.trim()),
       date: activity.date,
       restDays,
+      isSecondActivity,
     });
 
     const aggregate = await this.prisma.points_ledger.aggregate({
@@ -99,14 +114,23 @@ export class ActivityPointsHandler {
     hasDescription: boolean;
     date: Date;
     restDays: string[];
+    isSecondActivity: boolean;
   }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays } = params;
+    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, isSecondActivity } = params;
 
     const dayName = DAY_NAMES[date.getDay()];
     const isRestDay = restDays.includes(dayName);
 
     switch (section) {
-      case 'power':
+      case 'power': {
+        if (!didUserDo) return 0;
+        if (isSecondActivity) return 5;
+        let pts = 10;
+        if (hasDescription) pts += 2;
+        if (isRestDay) pts += 15;
+        return pts;
+      }
+
       case 'mind': {
         if (!didUserDo) return 0;
         let pts = 10;
@@ -117,6 +141,7 @@ export class ActivityPointsHandler {
 
       case 'craft': {
         if (!didUserDo) return 0;
+        if (isSecondActivity) return 5;
         let pts = 10;
         if (hours != null && hours > 2) {
           const extraHours = Math.floor(hours - 2);

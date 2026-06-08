@@ -56,13 +56,28 @@ export class ActivitiesService {
       );
     }
 
-    const activity = await this.prisma.activities.create({
-      data: {
-        user_id: userId,
-        name: dto.name,
-        section: dto.section,
-      },
-      select: { id: true, name: true, section: true },
+    const activity = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.activities.create({
+        data: {
+          user_id: userId,
+          name: dto.name,
+          section: dto.section,
+        },
+        select: { id: true, name: true, section: true },
+      });
+
+      const setup = await tx.user_setups.upsert({
+        where: { user_id_section: { user_id: userId, section: dto.section } },
+        create: { user_id: userId, section: dto.section, preferred_time: null, rest_days: [] },
+        update: {},
+        select: { id: true },
+      });
+
+      await tx.user_setup_activities.create({
+        data: { user_setup_id: setup.id, activity_id: created.id, is_primary: false },
+      });
+
+      return created;
     });
 
     return activity;
