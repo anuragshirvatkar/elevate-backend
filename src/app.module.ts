@@ -27,6 +27,7 @@ import { HelpModule } from './help/help.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
 import { StatsModule } from './stats/stats.module';
 import { SupportModule } from './support/support.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { SupportModule } from './support/support.module';
     ActivityLogsModule,
     StatsModule,
     SupportModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -616,3 +616,12 @@ model notification_jobs {
   @@index([user_id])
   @@index([status])
 }
+
+model admins {
+  id            String   @id @default(uuid()) @db.Uuid
+  email         String   @unique
+  password_hash String
+  role          String   @default("admin")
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+}

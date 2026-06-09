@@ -8,6 +8,7 @@ import { seedAvatars } from './seeds/avatars.seed';
 import { seedActivities } from './seeds/activities.seed';
 import { seedBooks } from './seeds/books.seed';
 import { seedAchievements } from './seeds/achievements.seed';
+import { seedAdmin } from './seeds/admin.seed';
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -27,6 +28,7 @@ async function main() {
   await seedActivities(prisma);
   await seedBooks(prisma);
   await seedAchievements(prisma);
+  await seedAdmin(prisma);
   console.log('✅ Seeding completed');
 }
 
