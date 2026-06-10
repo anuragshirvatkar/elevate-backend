@@ -44,6 +44,12 @@ export class AdminService {
       whereClause.last_login_at = { gte: start, lte: end };
     }
 
+    if (query.openedDate) {
+      const start = new Date(query.openedDate + 'T00:00:00.000Z');
+      const end = new Date(query.openedDate + 'T23:59:59.999Z');
+      whereClause.last_seen_at = { gte: start, lte: end };
+    }
+
     const [total, users] = await Promise.all([
       this.prisma.users.count({ where: whereClause }),
       this.prisma.users.findMany({

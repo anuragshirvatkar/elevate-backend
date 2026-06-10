@@ -29,7 +29,7 @@ export class AdminController {
   })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'date', required: false, type: String, example: '2024-01-15', description: 'Filter users who logged in on this date (YYYY-MM-DD)' })
+  @ApiQuery({ name: 'date', required: false, type: String, example: '2024-01-15', description: 'Filter users who opened the app on this date (YYYY-MM-DD)' })
   @ApiOkResponse({ description: 'Paginated users list' })
   getUsers(@Query() query: AdminUsersQueryDto) {
     return this.adminService.getUsers(query);

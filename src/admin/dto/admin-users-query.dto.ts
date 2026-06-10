@@ -24,4 +24,12 @@ export class AdminUsersQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'date must be in YYYY-MM-DD format' })
   date?: string;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15',
+    description: 'Filter users who opened the app on this date (YYYY-MM-DD)',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'openedDate must be in YYYY-MM-DD format' })
+  openedDate?: string;
 }
