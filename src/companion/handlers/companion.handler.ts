@@ -155,18 +155,6 @@ export class CompanionHandler {
         metadata: companionMeta,
       });
       this.logger.log(`Companion LEADERBOARD_ENTERED: userId=${userId} section=${section} rank=${newRank}`);
-    } else if (newRank < oldRank) {
-      await this.companionMessagesService.createMessage({
-        userId,
-        type: CompanionMessageType.LEADERBOARD_MOVED,
-        companionName: companion.name,
-        title: `Climbed to #${newRank} in ${sectionLabel}`,
-        message: `You climbed to #${newRank} in ${sectionLabel} this week. Stay dangerous.`,
-        entityType: 'leaderboard',
-        action: 'open_leaderboard',
-        metadata: companionMeta,
-      });
-      this.logger.log(`Companion LEADERBOARD_MOVED: userId=${userId} section=${section} rank=${newRank}`);
     }
   }
 
