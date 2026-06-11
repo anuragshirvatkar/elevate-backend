@@ -1,11 +1,15 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AvatarsService } from '../avatars/avatars.service';
 
 @Injectable()
 export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly avatarsService: AvatarsService,
+  ) {}
 
   async getProfile(userId: string) {
     const [
@@ -21,6 +25,7 @@ export class ProfileService {
       streaks,
       pointsAggregate,
       mindSetup,
+      avatarProgress,
     ] = await Promise.all([
       this.prisma.users.findUnique({
         where: { id: userId },
@@ -69,7 +74,7 @@ export class ProfileService {
 
       this.prisma.user_achievements.groupBy({
         by: ['achievement_id'],
-        where: { is_unlocked: true },
+        where: { is_unlocked: true, user: { deleted_at: null } },
         _count: { id: true },
       }),
 
@@ -87,6 +92,7 @@ export class ProfileService {
         select: { is_active: true },
       }),
 
+      this.avatarsService.getAvatarsProgress(userId),
     ]);
 
     if (!user) throw new NotFoundException('User not found');
@@ -142,6 +148,7 @@ export class ProfileService {
         unlockedAt: ua?.unlocked_at ? ua.unlocked_at.toISOString() : null,
         revokedAt: ua?.revoked_at ? ua.revoked_at.toISOString() : null,
         lastReason: ua?.last_reason ?? null,
+        progress: avatarProgress[av.slug] ?? null,
         history: history.map((h) => ({
           avatarId: h.avatar_id,
           avatarName: h.avatar.name,

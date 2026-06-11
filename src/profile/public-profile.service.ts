@@ -55,7 +55,7 @@ export class PublicProfileService {
 
       this.prisma.user_achievements.groupBy({
         by: ['achievement_id'],
-        where: { is_unlocked: true },
+        where: { is_unlocked: true, user: { deleted_at: null } },
         _count: { id: true },
       }),
 

@@ -127,32 +127,33 @@ export class ActivityAvatarHandler {
     const thirtyDaysAgo = new Date(today);
     thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
 
-    const relapseDays = await this.prisma.user_activities.findMany({
-      where: {
-        user_id: userId,
-        section: 'purity',
-        relapse_count: { gt: 0 },
-        date: { gte: thirtyDaysAgo, lte: today },
-      },
-      distinct: ['date'],
-      select: { date: true },
-    });
+    const [relapseDays, loggedDays] = await Promise.all([
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section: 'purity',
+          relapse_count: { gt: 0 },
+          date: { gte: thirtyDaysAgo, lte: today },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section: 'purity',
+          date: { gte: thirtyDaysAgo, lte: today },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+    ]);
 
     const relapseCount = relapseDays.length;
+    const loggedDaysCount = loggedDays.length;
 
-    const streak = await this.prisma.user_streaks.findUnique({
-      where: { user_id_section: { user_id: userId, section: 'purity' } },
-      select: { current_streak: true },
-    });
-
-    const currentStreak = streak?.current_streak ?? 0;
-    const minStreakDays = 7;
-
-    if (relapseCount <= 1 && currentStreak >= minStreakDays) {
-      const result = await this.avatarsService.unlockAvatarBySlug(
-        userId,
-        AvatarSlugs.KAEL,
-      );
+    if (relapseCount <= 1 && loggedDaysCount >= 30) {
+      const result = await this.avatarsService.unlockAvatarBySlug(userId, AvatarSlugs.KAEL);
       if (result) {
         this.logger.log(`Avatar unlocked: userId=${userId} avatar=${result.slug}`);
         this.eventEmitter.emit(
@@ -161,22 +162,13 @@ export class ActivityAvatarHandler {
         );
       }
     } else {
-      let reason: string;
-      if (relapseCount > 1) {
-        reason = 'Multiple relapses detected this month';
-      } else {
-        reason = `Current streak (${currentStreak}) is below required (${minStreakDays} days)`;
-      }
+      const reason = relapseCount > 1
+        ? 'More than 1 relapse in the last 30 days'
+        : `Only ${loggedDaysCount} of 30 purity days logged`;
 
-      const result = await this.avatarsService.revokeAvatarBySlug(
-        userId,
-        AvatarSlugs.KAEL,
-        reason,
-      );
+      const result = await this.avatarsService.revokeAvatarBySlug(userId, AvatarSlugs.KAEL, reason);
       if (result) {
-        this.logger.log(
-          `Avatar revoked: userId=${userId} avatar=${result.slug} reason="${reason}"`,
-        );
+        this.logger.log(`Avatar revoked: userId=${userId} avatar=${result.slug} reason="${reason}"`);
         this.eventEmitter.emit(
           EventNames.AVATAR_REVOKED,
           new AvatarRevokedEvent({ userId, avatarId: result.id, slug: result.slug, name: result.name }),

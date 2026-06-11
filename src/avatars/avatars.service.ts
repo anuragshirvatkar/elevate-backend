@@ -8,6 +8,40 @@ export interface AvatarActionResult {
   slug: string;
 }
 
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+export interface WeeklyAvatarProgress {
+  type: 'weekly';
+  currentWeek: number;
+  currentWeekDays: number;
+  totalWeeks: number;
+  requiredDaysPerWeek: number;
+  weeks: {
+    week: number;
+    days: number;
+    required: number;
+    met: boolean;
+    inProgress?: true;
+  }[];
+}
+
+export interface PurityAvatarProgress {
+  type: 'purity';
+  relapsesThisMonth: number;
+  maxRelapsesAllowed: number;
+  loggedDays: number;
+  requiredLoggedDays: number;
+}
+
+export interface DefaultAvatarProgress {
+  type: 'default';
+}
+
+export type AvatarProgress =
+  | WeeklyAvatarProgress
+  | PurityAvatarProgress
+  | DefaultAvatarProgress;
+
 @Injectable()
 export class AvatarsService {
   constructor(private prisma: PrismaService) {}
@@ -117,6 +151,159 @@ export class AvatarsService {
     }
 
     return { id: avatar.id, name: avatar.name, slug: avatar.slug };
+  }
+
+  async getAvatarsProgress(
+    userId: string,
+  ): Promise<Record<string, AvatarProgress>> {
+    const today = this.normalizeDate(new Date());
+
+    const [verin, renji, aelius, kael] = await Promise.all([
+      this.computeWeeklyProgress(userId, 'mind', 2, 3, today),
+      this.computeWeeklyProgress(userId, 'craft', 3, 3, today),
+      this.computeWeeklyProgress(userId, 'power', 2, 4, today),
+      this.computeKaelProgress(userId, today),
+    ]);
+
+    return {
+      [AvatarSlugs.RIVEN]: { type: 'default' },
+      [AvatarSlugs.VERIN]: verin,
+      [AvatarSlugs.RENJI]: renji,
+      [AvatarSlugs.AELIUS]: aelius,
+      [AvatarSlugs.KAEL]: kael,
+    };
+  }
+
+  private async computeWeeklyProgress(
+    userId: string,
+    section: string,
+    totalWeeks: number,
+    requiredDaysPerWeek: number,
+    today: Date,
+  ): Promise<WeeklyAvatarProgress> {
+    const currentWeekMonday = this.getWeekMonday(today);
+    const nextMonday = new Date(currentWeekMonday);
+    nextMonday.setUTCDate(nextMonday.getUTCDate() + 7);
+
+    const rangeStart = new Date(currentWeekMonday);
+    rangeStart.setUTCDate(rangeStart.getUTCDate() - totalWeeks * 7);
+
+    const [currentRows, pastRows] = await Promise.all([
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section,
+          did_user_do: true,
+          date: { gte: currentWeekMonday, lt: nextMonday },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section,
+          did_user_do: true,
+          date: { gte: rangeStart, lt: currentWeekMonday },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+    ]);
+
+    const currentWeekDays = currentRows.length;
+
+    const pastCounts = new Array(totalWeeks).fill(0);
+    for (const { date } of pastRows) {
+      const diffMs = currentWeekMonday.getTime() - new Date(date).getTime();
+      const weekBack = Math.ceil(diffMs / SEVEN_DAYS_MS);
+      if (weekBack >= 1 && weekBack <= totalWeeks) {
+        pastCounts[weekBack - 1]++;
+      }
+    }
+
+    // week 1 = current in-progress, week 2 = last completed, week N+1 = oldest
+    const weeks: WeeklyAvatarProgress['weeks'] = [
+      {
+        week: 1,
+        days: currentWeekDays,
+        required: requiredDaysPerWeek,
+        met: currentWeekDays >= requiredDaysPerWeek,
+        inProgress: true,
+      },
+      ...pastCounts.map((days, i) => ({
+        week: i + 2,
+        days,
+        required: requiredDaysPerWeek,
+        met: days >= requiredDaysPerWeek,
+      })),
+    ];
+
+    const qualifiedPastWeeks = pastCounts.filter(
+      (c) => c >= requiredDaysPerWeek,
+    ).length;
+
+    return {
+      type: 'weekly',
+      currentWeek: Math.min(qualifiedPastWeeks + 1, totalWeeks),
+      currentWeekDays,
+      totalWeeks,
+      requiredDaysPerWeek,
+      weeks,
+    };
+  }
+
+  private async computeKaelProgress(
+    userId: string,
+    today: Date,
+  ): Promise<PurityAvatarProgress> {
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setUTCDate(thirtyDaysAgo.getUTCDate() - 30);
+
+    const [relapseDays, loggedDays] = await Promise.all([
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section: 'purity',
+          relapse_count: { gt: 0 },
+          date: { gte: thirtyDaysAgo, lte: today },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+      this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section: 'purity',
+          date: { gte: thirtyDaysAgo, lte: today },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      }),
+    ]);
+
+    return {
+      type: 'purity',
+      relapsesThisMonth: relapseDays.length,
+      maxRelapsesAllowed: 1,
+      loggedDays: loggedDays.length,
+      requiredLoggedDays: 30,
+    };
+  }
+
+  private getWeekMonday(date: Date): Date {
+    const d = new Date(date);
+    const day = d.getUTCDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    d.setUTCDate(d.getUTCDate() + offset);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
+  }
+
+  private normalizeDate(date: Date): Date {
+    const d = new Date(date);
+    d.setUTCHours(0, 0, 0, 0);
+    return d;
   }
 
   private async autoSwitchToRiven(userId: string, now: Date): Promise<void> {
