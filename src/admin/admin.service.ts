@@ -99,6 +99,11 @@ export class AdminService {
             },
             orderBy: { date: 'asc' },
           },
+          user_app_opens: {
+            orderBy: { opened_at: 'desc' },
+            take: 1,
+            select: { opened_at: true },
+          },
         },
       }),
     ]);
@@ -135,6 +140,7 @@ export class AdminService {
         username: u.username,
         created_at: u.created_at,
         last_login_at: u.last_login_at,
+        last_seen_at: u.user_app_opens[0]?.opened_at ?? null,
         onboarding_completed: u.onboarding_completed,
         companion,
         avatar,
