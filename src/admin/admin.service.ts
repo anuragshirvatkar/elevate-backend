@@ -1,8 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { compareSync } from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
+import { AdminTicketsQueryDto } from './dto/admin-tickets-query.dto';
 
 @Injectable()
 export class AdminService {
@@ -25,6 +26,57 @@ export class AdminService {
     });
 
     return { accessToken, email: admin.email, role: admin.role };
+  }
+
+  async getTickets(query: AdminTicketsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.status) where.status = query.status;
+    if (query.issueType) where.issue_type = query.issueType;
+
+    const [total, tickets] = await Promise.all([
+      this.prisma.support_tickets.count({ where }),
+      this.prisma.support_tickets.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { created_at: 'desc' },
+        include: {
+          support_ticket_images: { select: { id: true, image_url: true } },
+          user: { select: { id: true, username: true, email: true } },
+        },
+      }),
+    ]);
+
+    return {
+      data: tickets.map((t) => ({
+        id: t.id,
+        issueType: t.issue_type,
+        title: t.title,
+        description: t.description,
+        status: t.status,
+        user: t.user,
+        images: t.support_ticket_images.map((img) => ({ id: img.id, imageUrl: img.image_url })),
+        createdAt: t.created_at?.toISOString() ?? null,
+        updatedAt: t.updated_at?.toISOString() ?? null,
+      })),
+      meta: { total, page, limit, total_pages: Math.ceil(total / limit) },
+    };
+  }
+
+  async resolveTicket(ticketId: string) {
+    const ticket = await this.prisma.support_tickets.findUnique({ where: { id: ticketId } });
+    if (!ticket) throw new NotFoundException('Ticket not found');
+
+    const updated = await this.prisma.support_tickets.update({
+      where: { id: ticketId },
+      data: { status: 'resolved', updated_at: new Date() },
+    });
+
+    return { success: true, id: updated.id, status: updated.status };
   }
 
   async getUsers(query: AdminUsersQueryDto) {

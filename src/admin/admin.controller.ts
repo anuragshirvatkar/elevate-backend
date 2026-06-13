@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Body, Query, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Body, Query, Param, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBody, ApiBearerAuth, ApiOkResponse, ApiUnauthorizedResponse, ApiQuery } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { AdminJwtGuard } from './admin-jwt.guard';
 import { AdminLoginDto } from './dto/admin-login.dto';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
+import { AdminTicketsQueryDto } from './dto/admin-tickets-query.dto';
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -18,6 +19,28 @@ export class AdminController {
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   login(@Body() dto: AdminLoginDto) {
     return this.adminService.login(dto.email, dto.password);
+  }
+
+  @UseGuards(AdminJwtGuard)
+  @Get('tickets')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all support tickets', description: 'Returns paginated support tickets with user info and images. Optionally filter by status or issue type.' })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'status', required: false, type: String, example: 'open' })
+  @ApiQuery({ name: 'issueType', required: false, type: String, example: 'bug' })
+  @ApiOkResponse({ description: 'Paginated tickets list' })
+  getTickets(@Query() query: AdminTicketsQueryDto) {
+    return this.adminService.getTickets(query);
+  }
+
+  @UseGuards(AdminJwtGuard)
+  @Patch('tickets/:id/resolve')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Resolve a support ticket', description: 'Marks a support ticket as resolved.' })
+  @ApiOkResponse({ description: 'Ticket resolved' })
+  resolveTicket(@Param('id') id: string) {
+    return this.adminService.resolveTicket(id);
   }
 
   @UseGuards(AdminJwtGuard)

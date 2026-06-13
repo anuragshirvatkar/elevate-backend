@@ -33,6 +33,13 @@ export class AppTrackingService {
       updates.push(this.prisma.user_app_opens.create({ data: { user_id: userId } }));
     }
 
+    updates.push(
+      this.prisma.users.update({
+        where: { id: userId },
+        data: { last_seen_at: new Date() },
+      }),
+    );
+
     await Promise.all(updates);
   }
 
