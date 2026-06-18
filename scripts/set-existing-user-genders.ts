@@ -19,12 +19,7 @@ async function main() {
   });
 
   const maleResult = await prisma.users.updateMany({
-    where: {
-      OR: [
-        { email: null },
-        { email: { not: { equals: FEMALE_EMAIL, mode: 'insensitive' } } },
-      ],
-    },
+    where: femaleUser ? { id: { not: femaleUser.id } } : {},
     data: { gender: 'male', updated_at: new Date() },
   });
 
