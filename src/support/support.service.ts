@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { CreateSupportTicketDto } from './dto/support.dto';
 
-const ALLOWED_ISSUE_TYPES = ['bug', 'feature_request', 'payment', 'account', 'other'] as const;
+const ALLOWED_ISSUE_TYPES = ['bug', 'feature_request', 'feedback', 'payment', 'account', 'other'] as const;
 const ALLOWED_STATUSES = ['open', 'in_progress', 'resolved', 'closed'] as const;
 const ALLOWED_IMAGE_TYPES = ['jpg', 'jpeg', 'png', 'webp'] as const;
 

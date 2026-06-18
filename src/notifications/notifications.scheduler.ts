@@ -14,10 +14,10 @@ import {
 
 const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
-const AVATAR_SECTION_CONFIG: Record<string, { slug: string; threshold: number; label: string }> = {
-  power: { slug: 'aelius', threshold: 4, label: 'Power' },
-  craft: { slug: 'renji', threshold: 3, label: 'Craft' },
-  mind: { slug: 'verin', threshold: 3, label: 'Mind' },
+const AVATAR_SECTION_CONFIG: Record<string, { slug: string; threshold: number; requiredWeeks: number; label: string }> = {
+  power: { slug: 'aelius', threshold: 4, requiredWeeks: 2, label: 'Power' },
+  craft: { slug: 'renji', threshold: 3, requiredWeeks: 3, label: 'Craft' },
+  mind: { slug: 'verin', threshold: 3, requiredWeeks: 3, label: 'Mind' },
 };
 
 const STREAK_ACHIEVEMENT_CONFIG: Record<string, Array<{ slug: string; threshold: number; label: string }>> = {
@@ -234,7 +234,7 @@ export class NotificationsScheduler implements OnModuleInit {
         section: { in: ['power', 'mind', 'craft'] },
         is_active: true,
       },
-      select: { id: true, user_id: true, section: true, preferred_time: true },
+      select: { id: true, user_id: true, section: true, preferred_time: true, rest_days: true },
     });
 
     this.logger.log(`[CRON] checkActivityReminders: found ${setups.length} setup(s) with preferred_time`);
@@ -280,13 +280,7 @@ export class NotificationsScheduler implements OnModuleInit {
       }
 
       let activityName: string | null = null;
-      if (setup.section === 'mind') {
-        const setupBook = await this.prisma.user_setup_books.findFirst({
-          where: { user_setup_id: setup.id, user_book: { is_completed: false } },
-          include: { user_book: { select: { title: true } } },
-        });
-        activityName = setupBook?.user_book?.title ?? null;
-      } else {
+      if (setup.section !== 'mind') {
         const primary = await this.prisma.user_setup_activities.findFirst({
           where: { user_setup_id: setup.id, is_primary: true },
           include: { activity: { select: { name: true } } },
@@ -294,9 +288,21 @@ export class NotificationsScheduler implements OnModuleInit {
         activityName = primary?.activity?.name ?? null;
       }
 
-      const { title, body } = this.buildActivityReminderMessage(setup.section, activityName);
+      const restDays: string[] = Array.isArray(setup.rest_days) ? (setup.rest_days as string[]) : [];
+      const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
+      const todayDayName = DAY_NAMES[new Date().getDay()];
+      const isRestDay = restDays.includes(todayDayName);
 
-      this.logger.log(`[CRON] SENDING reminder to userId=${setup.user_id} section=${setup.section} activity="${activityName}" title="${title}"`);
+      let title: string;
+      let body: string;
+
+      if (isRestDay) {
+        ({ title, body } = this.buildRestDayMessage(setup.section));
+      } else {
+        ({ title, body } = this.buildActivityReminderMessage(setup.section, activityName));
+      }
+
+      this.logger.log(`[CRON] SENDING reminder to userId=${setup.user_id} section=${setup.section} activity="${activityName}" isRestDay=${isRestDay} title="${title}"`);
 
       await this.notificationsService.sendNotification(
         setup.user_id,
@@ -442,7 +448,7 @@ export class NotificationsScheduler implements OnModuleInit {
 
   private async checkNearAvatarUnlock(
     section: string,
-    config: { slug: string; threshold: number; label: string },
+    config: { slug: string; threshold: number; requiredWeeks: number; label: string },
     timezoneMap: Map<string, string>,
   ): Promise<void> {
     const avatar = await this.prisma.avatars.findUnique({ where: { slug: config.slug } });
@@ -481,6 +487,15 @@ export class NotificationsScheduler implements OnModuleInit {
       });
 
       if (weekCount !== config.threshold - 1) continue;
+
+      const prevWeeksQualify = await this.checkPreviousWeeksThreshold(
+        userId,
+        section,
+        weekStart,
+        config.threshold,
+        config.requiredWeeks - 1,
+      );
+      if (!prevWeeksQualify) continue;
 
       const cooldown = await this.notificationsService.getCooldownData(
         userId,
@@ -575,12 +590,75 @@ export class NotificationsScheduler implements OnModuleInit {
     }
   }
 
+  private async checkPreviousWeeksThreshold(
+    userId: string,
+    section: string,
+    currentWeekMonday: Date,
+    threshold: number,
+    weeksToCheck: number,
+  ): Promise<boolean> {
+    for (let i = 1; i <= weeksToCheck; i++) {
+      const weekEnd = new Date(currentWeekMonday);
+      weekEnd.setUTCDate(weekEnd.getUTCDate() - (i - 1) * 7);
+      const weekStart = new Date(currentWeekMonday);
+      weekStart.setUTCDate(weekStart.getUTCDate() - i * 7);
+
+      const days = await this.prisma.user_activities.findMany({
+        where: {
+          user_id: userId,
+          section,
+          did_user_do: true,
+          date: { gte: weekStart, lt: weekEnd },
+        },
+        distinct: ['date'],
+        select: { date: true },
+      });
+
+      if (days.length < threshold) return false;
+    }
+    return true;
+  }
+
   private async buildTimezoneMap(): Promise<Map<string, string>> {
     const users = await this.prisma.users.findMany({
       where: { onboarding_completed: true },
       select: { id: true, timezone: true },
     });
     return new Map(users.map(u => [u.id, u.timezone]));
+  }
+
+  private buildRestDayMessage(section: string): { title: string; body: string } {
+    if (section === 'power') {
+      const variants = [
+        { title: 'Rest Day 💪', body: 'Take a break champ. Your muscles grow on days like these.' },
+        { title: 'Cool Down', body: "It's your rest day. Let your body recover and come back stronger." },
+        { title: 'Rest Up', body: 'No training today. Rest is part of the grind.' },
+        { title: 'Recovery Day', body: 'Chill out champ. Rest days are where the gains happen.' },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    if (section === 'craft') {
+      const variants = [
+        { title: 'Rest Day 🛠️', body: 'Step away from the screen today. Rest sharpens the mind.' },
+        { title: 'Recharge', body: "It's a rest day. Let your creativity breathe." },
+        { title: 'Take a Break', body: 'No session today. A rested mind builds better tomorrow.' },
+        { title: 'Cool Down', body: 'Rest day — disconnect and recharge. You earned it.' },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    if (section === 'mind') {
+      const variants = [
+        { title: 'Rest Day 📖', body: "It's a rest day. Let your mind wander freely today." },
+        { title: 'Cool Down', body: 'No reading today. Rest is fuel for a sharper mind.' },
+        { title: 'Take It Easy', body: 'Rest day champ. Your mind deserves a break too.' },
+        { title: 'Mind Reset', body: 'Step back today. Rest days make the lessons stick.' },
+      ];
+      return variants[Math.floor(Math.random() * variants.length)];
+    }
+
+    return { title: 'Rest Day', body: 'Take it easy today. Rest is part of the process.' };
   }
 
   private buildActivityReminderMessage(
@@ -610,12 +688,11 @@ export class NotificationsScheduler implements OnModuleInit {
     }
 
     if (section === 'mind') {
-      const book = activityName ?? 'your book';
       const variants = [
-        { title: 'Reading Time', body: `Time to pick up ${book}. A few pages go far.` },
-        { title: 'Open a Page', body: `${book} is waiting. Don't let today slip by.` },
-        { title: 'Feed Your Mind', body: `${book} — your session is coming up.` },
-        { title: 'Knowledge Time', body: `${book}. A few pages is all it takes.` },
+        { title: 'Reading Time', body: 'Your reading session is coming up. A few pages go far.' },
+        { title: 'Open a Page', body: "Your reading session is ahead. Don't let today slip by." },
+        { title: 'Feed Your Mind', body: 'A reading session is coming up. Keep the streak going.' },
+        { title: 'Knowledge Time', body: 'Time to read. A few pages is all it takes.' },
       ];
       return variants[Math.floor(Math.random() * variants.length)];
     }

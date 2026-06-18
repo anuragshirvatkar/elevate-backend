@@ -6,7 +6,7 @@ export class GetLeaderboardDto {
   @ApiPropertyOptional({
     enum: LEADERBOARD_PERIODS,
     default: 'weekly',
-    description: 'Time period to aggregate points over',
+    description: 'Time period — rolling window ending at request time (weekly: 7d, monthly: 30d, yearly: 365d, all_time/all: everything)',
   })
   @IsOptional()
   @IsString()

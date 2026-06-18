@@ -1,13 +1,18 @@
 import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { getLocalToday } from '../utils/date.utils';
+import { truncateToThreeLines, secondsUntilEndOfLocalDay } from '../utils/text.utils';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import { UpsertJournalDto } from './dto/upsert-journal.dto';
+import { TodayGoalResponseDto } from './dto/today-goal-response.dto';
 import { JournalCreatedEvent } from '../events/journal-created.event';
 import { PointsUpdatedEvent } from '../events/points-updated.event';
 import { EventNames } from '../events/event-names';
 
 const JOURNAL_POINTS = 5;
+const TODAY_GOAL_HEADING = "Today's goal";
+const TODAY_GOAL_DISMISS_PREFIX = 'journal:today-goal:dismissed';
 
 export interface JournalEntry {
   id: string;
@@ -39,6 +44,7 @@ export class JournalsService {
   constructor(
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
+    private redis: RedisService,
   ) {}
 
   async upsert(userId: string, dto: UpsertJournalDto): Promise<JournalEntry> {
@@ -128,6 +134,61 @@ export class JournalsService {
     });
 
     return entry ? this.formatEntry(entry) : null;
+  }
+
+  async getTodayGoal(userId: string, today?: string): Promise<TodayGoalResponseDto> {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const timezone = user?.timezone ?? 'Asia/Kolkata';
+    const todayDate = today ? this.parseDate(today) : getLocalToday(timezone);
+    const todayKey = today ?? todayDate.toISOString().slice(0, 10);
+
+    const dismissed = await this.redis.exists(this.getTodayGoalDismissKey(userId, todayKey));
+    if (dismissed) {
+      return { show: false };
+    }
+
+    const yesterday = new Date(todayDate);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+    const entry = await this.prisma.journals.findUnique({
+      where: { user_id_date: { user_id: userId, date: yesterday } },
+      select: { tomorrow_mission: true, date: true },
+    });
+
+    const mission = entry?.tomorrow_mission?.trim();
+    if (!mission) {
+      return { show: false };
+    }
+
+    return {
+      show: true,
+      heading: TODAY_GOAL_HEADING,
+      goal: truncateToThreeLines(mission),
+      sourceDate: entry!.date.toISOString().slice(0, 10),
+    };
+  }
+
+  async dismissTodayGoal(userId: string, today?: string): Promise<{ success: boolean }> {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const timezone = user?.timezone ?? 'Asia/Kolkata';
+    const todayDate = today ? this.parseDate(today) : getLocalToday(timezone);
+    const todayKey = today ?? todayDate.toISOString().slice(0, 10);
+    const ttl = secondsUntilEndOfLocalDay(timezone);
+
+    await this.redis.set(this.getTodayGoalDismissKey(userId, todayKey), '1', ttl);
+    this.logger.log(`Today goal dismissed: userId=${userId} date=${todayKey} ttl=${ttl}s`);
+
+    return { success: true };
+  }
+
+  private getTodayGoalDismissKey(userId: string, today: string): string {
+    return `${TODAY_GOAL_DISMISS_PREFIX}:${userId}:${today}`;
   }
 
   async getHistory(

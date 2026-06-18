@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EditProfileDto } from './dto/edit-profile.dto';
+import { UserGender } from '../constants/user-gender';
+import { AvatarSlugs } from '../avatars/constants/avatar-slugs';
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
@@ -35,7 +37,7 @@ export class EditProfileService {
   ): Promise<{ success: boolean; updatedFields: string[] }> {
     const currentUser = await this.prisma.users.findUnique({
       where: { id: userId },
-      select: { username: true },
+      select: { username: true, gender: true },
     });
     if (!currentUser) throw new NotFoundException('User not found');
 
@@ -139,9 +141,15 @@ export class EditProfileService {
         if (dto.avatarId !== undefined) {
           const ua = await tx.user_avatars.findUnique({
             where: { user_id_avatar_id: { user_id: userId, avatar_id: dto.avatarId } },
-            include: { avatar: { select: { name: true } } },
+            include: { avatar: { select: { name: true, slug: true } } },
           });
           if (!ua || !ua.is_unlocked) throw new BadRequestException('Avatar is not unlocked');
+          if (
+            currentUser.gender === UserGender.FEMALE &&
+            ua.avatar.slug === AvatarSlugs.KAEL
+          ) {
+            throw new BadRequestException('This avatar is not available.');
+          }
           newAvName = ua.avatar.name;
 
           await tx.user_avatars.updateMany({

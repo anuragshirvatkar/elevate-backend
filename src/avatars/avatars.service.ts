@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { AvatarSlugs } from './constants/avatar-slugs';
+import { AvatarSlugs, BEGINNER_AVATAR_SLUGS } from './constants/avatar-slugs';
+import { UserGender } from '../constants/user-gender';
 
 export interface AvatarActionResult {
   id: string;
@@ -45,6 +46,130 @@ export type AvatarProgress =
 @Injectable()
 export class AvatarsService {
   constructor(private prisma: PrismaService) {}
+
+  async syncBeginnerAvatars(userId: string): Promise<void> {
+    await this.ensureBeginnerAvatarsUnlocked(userId, new Date());
+  }
+
+  getDefaultAvatarSlug(gender?: UserGender | string | null): string {
+    return gender === UserGender.FEMALE ? AvatarSlugs.DRENA : AvatarSlugs.RIVEN;
+  }
+
+  async initializeDefaultAvatars(
+    userId: string,
+    gender?: UserGender | string | null,
+  ): Promise<void> {
+    const now = new Date();
+    await this.ensureBeginnerAvatarsUnlocked(userId, now);
+    await this.selectAvatarBySlug(userId, this.getDefaultAvatarSlug(gender), now);
+  }
+
+  async applyDefaultAvatarForGender(
+    userId: string,
+    gender: UserGender,
+  ): Promise<void> {
+    const now = new Date();
+    await this.ensureBeginnerAvatarsUnlocked(userId, now);
+    await this.selectAvatarBySlug(userId, this.getDefaultAvatarSlug(gender), now);
+  }
+
+  private async ensureBeginnerAvatarsUnlocked(userId: string, now: Date): Promise<void> {
+    for (const slug of BEGINNER_AVATAR_SLUGS) {
+      const avatar = await this.prisma.avatars.findUnique({ where: { slug } });
+      if (!avatar) continue;
+
+      const existing = await this.prisma.user_avatars.findUnique({
+        where: {
+          user_id_avatar_id: { user_id: userId, avatar_id: avatar.id },
+        },
+      });
+
+      if (existing?.is_unlocked) continue;
+
+      if (existing) {
+        await this.prisma.user_avatars.update({
+          where: {
+            user_id_avatar_id: { user_id: userId, avatar_id: avatar.id },
+          },
+          data: {
+            is_unlocked: true,
+            unlocked_at: now,
+            revoked_at: null,
+            last_reason: null,
+            updated_at: now,
+          },
+        });
+      } else {
+        await this.prisma.user_avatars.create({
+          data: {
+            user_id: userId,
+            avatar_id: avatar.id,
+            is_unlocked: true,
+            unlocked_at: now,
+            unlock_count: 1,
+            created_at: now,
+            updated_at: now,
+          },
+        });
+      }
+
+      const existingHistory = await this.prisma.user_avatar_history.findFirst({
+        where: {
+          user_id: userId,
+          avatar_id: avatar.id,
+          event_type: 'unlocked',
+          reason: 'account_created',
+        },
+      });
+
+      if (!existingHistory) {
+        await this.prisma.user_avatar_history.create({
+          data: {
+            user_id: userId,
+            avatar_id: avatar.id,
+            event_type: 'unlocked',
+            reason: 'account_created',
+            created_at: now,
+          },
+        });
+      }
+    }
+  }
+
+  private async selectAvatarBySlug(
+    userId: string,
+    slug: string,
+    now: Date,
+  ): Promise<void> {
+    const avatar = await this.prisma.avatars.findUnique({ where: { slug } });
+    if (!avatar) return;
+
+    await this.prisma.user_avatars.updateMany({
+      where: { user_id: userId },
+      data: { is_selected: false, updated_at: now },
+    });
+
+    await this.prisma.user_avatars.upsert({
+      where: {
+        user_id_avatar_id: { user_id: userId, avatar_id: avatar.id },
+      },
+      create: {
+        user_id: userId,
+        avatar_id: avatar.id,
+        is_unlocked: true,
+        is_selected: true,
+        unlock_count: 1,
+        unlocked_at: now,
+        created_at: now,
+        updated_at: now,
+      },
+      update: {
+        is_unlocked: true,
+        is_selected: true,
+        updated_at: now,
+      },
+    });
+  }
 
   async unlockAvatarBySlug(
     userId: string,
@@ -147,7 +272,7 @@ export class AvatarsService {
     });
 
     if (wasSelected) {
-      await this.autoSwitchToRiven(userId, now);
+      await this.autoSwitchToDefaultAvatar(userId, now);
     }
 
     return { id: avatar.id, name: avatar.name, slug: avatar.slug };
@@ -155,6 +280,7 @@ export class AvatarsService {
 
   async getAvatarsProgress(
     userId: string,
+    gender?: string | null,
   ): Promise<Record<string, AvatarProgress>> {
     const today = this.normalizeDate(new Date());
 
@@ -162,16 +288,24 @@ export class AvatarsService {
       this.computeWeeklyProgress(userId, 'mind', 2, 3, today),
       this.computeWeeklyProgress(userId, 'craft', 3, 3, today),
       this.computeWeeklyProgress(userId, 'power', 2, 4, today),
-      this.computeKaelProgress(userId, today),
+      gender === UserGender.FEMALE
+        ? Promise.resolve(null)
+        : this.computeKaelProgress(userId, today),
     ]);
 
-    return {
+    const progress: Record<string, AvatarProgress> = {
       [AvatarSlugs.RIVEN]: { type: 'default' },
+      [AvatarSlugs.DRENA]: { type: 'default' },
       [AvatarSlugs.VERIN]: verin,
       [AvatarSlugs.RENJI]: renji,
       [AvatarSlugs.AELIUS]: aelius,
-      [AvatarSlugs.KAEL]: kael,
     };
+
+    if (kael !== null) {
+      progress[AvatarSlugs.KAEL] = kael;
+    }
+
+    return progress;
   }
 
   private async computeWeeklyProgress(
@@ -306,36 +440,28 @@ export class AvatarsService {
     return d;
   }
 
-  private async autoSwitchToRiven(userId: string, now: Date): Promise<void> {
-    const riven = await this.prisma.avatars.findUnique({
-      where: { slug: AvatarSlugs.RIVEN },
+  private async autoSwitchToDefaultAvatar(userId: string, now: Date): Promise<void> {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { gender: true },
     });
-    if (!riven) return;
 
-    await this.prisma.user_avatars.upsert({
-      where: {
-        user_id_avatar_id: { user_id: userId, avatar_id: riven.id },
-      },
-      create: {
-        user_id: userId,
-        avatar_id: riven.id,
-        is_unlocked: true,
-        is_selected: true,
-        unlock_count: 1,
-        unlocked_at: now,
-        created_at: now,
-        updated_at: now,
-      },
-      update: {
-        is_selected: true,
-        updated_at: now,
-      },
+    await this.selectAvatarBySlug(
+      userId,
+      this.getDefaultAvatarSlug(user?.gender),
+      now,
+    );
+
+    const defaultSlug = this.getDefaultAvatarSlug(user?.gender);
+    const defaultAvatar = await this.prisma.avatars.findUnique({
+      where: { slug: defaultSlug },
     });
+    if (!defaultAvatar) return;
 
     await this.prisma.user_avatar_history.create({
       data: {
         user_id: userId,
-        avatar_id: riven.id,
+        avatar_id: defaultAvatar.id,
         event_type: 'auto_switch',
         reason: 'Selected avatar revoked',
         created_at: now,

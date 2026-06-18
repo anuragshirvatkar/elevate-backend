@@ -2,6 +2,8 @@ import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { getLocalToday } from '../utils/date.utils';
 import { StatsQueryDto } from './dto/stats.dto';
+import { shouldShowPurityAnalytics } from '../constants/user-gender';
+import { buildPurityInsightNote, expandPurityRelapseRecords, PurityRelapseRecord } from './purity-insight';
 
 const SECTIONS = ['power', 'mind', 'craft', 'purity'] as const;
 
@@ -22,8 +24,10 @@ export class StatsService {
 
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
-      select: { created_at: true, timezone: true },
+      select: { created_at: true, timezone: true, gender: true },
     });
+
+    const showPurity = shouldShowPurityAnalytics(user?.gender);
 
     const range = this.calculateDateRange(period, startDate, endDate, today, user?.timezone ?? 'Asia/Kolkata');
 
@@ -93,18 +97,26 @@ export class StatsService {
         },
         select: { date: true, did_user_do: true, hours: true, activity_id: true },
       }),
+      showPurity
+        ? this.prisma.user_activities.findMany({
+            where: {
+              user_id: userId,
+              section: 'purity',
+              date: { gte: range.startDate, lte: range.endDate },
+            },
+            select: {
+              date: true,
+              relapse_count: true,
+              description: true,
+              reason_if_no: true,
+            },
+          })
+        : Promise.resolve([]),
       this.prisma.user_activities.findMany({
         where: {
           user_id: userId,
-          section: 'purity',
           date: { gte: range.startDate, lte: range.endDate },
-        },
-        select: { date: true, relapse_count: true },
-      }),
-      this.prisma.user_activities.findMany({
-        where: {
-          user_id: userId,
-          date: { gte: range.startDate, lte: range.endDate },
+          ...(showPurity ? {} : { section: { not: 'purity' } }),
         },
         select: { date: true, section: true },
       }),
@@ -118,12 +130,18 @@ export class StatsService {
       this.getStreaksMap(userId),
     ]);
 
+    const purityInsightRows = showPurity
+      ? this.buildPurityInsightRows(purityRows, range.endDate)
+      : [];
+
     const power = this.calculatePowerStats(powerRows, powerActivities, range.totalDays);
     const mind = mindActive
       ? this.calculateMindStats(mindRows, mindBooks, range.totalDays, range.startDate, range.endDate)
       : { isActive: false, message: 'Skipped for now' };
     const craft = this.calculateCraftStats(craftRows, powerActivities, range.totalDays);
-    const purity = this.calculatePurityStats(purityRows, streaksMap);
+    const purity = showPurity
+      ? this.calculatePurityStats(purityRows, streaksMap, purityInsightRows)
+      : undefined;
     const journaling = this.calculateJournalingStats(journals, range.totalDays);
     const consistency = this.calculateConsistency(allActivities, range.totalDays, power, mindActive ? mind : null, craft);
 
@@ -139,7 +157,7 @@ export class StatsService {
       power,
       mind,
       craft,
-      purity,
+      ...(purity !== undefined ? { purity } : {}),
       journaling,
       consistency,
     };
@@ -345,9 +363,27 @@ export class StatsService {
     };
   }
 
+  private buildPurityInsightRows(
+    rows: Array<{
+      date: Date;
+      relapse_count: number | null;
+      description: string | null;
+      reason_if_no: string | null;
+    }>,
+    endDate: Date,
+  ): PurityRelapseRecord[] {
+    const monthStart = new Date(endDate);
+    monthStart.setUTCDate(monthStart.getUTCDate() - 29);
+    monthStart.setUTCHours(0, 0, 0, 0);
+
+    const relapseRows = rows.filter((row) => (row.relapse_count ?? 0) > 0 && row.date >= monthStart);
+    return expandPurityRelapseRecords(relapseRows);
+  }
+
   private calculatePurityStats(
     rows: { date: Date; relapse_count: number | null }[],
     streaksMap: Map<string, any>,
+    insightRows: PurityRelapseRecord[],
   ) {
     let totalRelapses = 0;
     for (const row of rows) {
@@ -371,10 +407,13 @@ export class StatsService {
         }
       : { days: 0, startDate: null, endDate: null };
 
+    const insightNote = buildPurityInsightNote(insightRows);
+
     return {
       currentStreak,
       longestStreak,
       totalRelapses,
+      ...(insightNote ? { insightNote } : {}),
     };
   }
 

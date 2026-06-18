@@ -37,6 +37,15 @@ export async function seedCompanions(prisma: PrismaClient) {
       image_url:
         'https://res.cloudinary.com/dpy2frmzi/image/upload/v1778402095/Seris_Astraea_ldziyr.png',
     },
+
+    {
+      slug: 'zedra-morvain',
+      name: 'Zedra Morvain',
+      description:
+        'Mistress of forbidden magic and keeper of secrets best left buried.',
+      image_url:
+        'https://res.cloudinary.com/dpy2frmzi/image/upload/v1781605773/zedra-perfect_ncm84q.png',
+    },
   ];
 
   for (const companion of companions) {

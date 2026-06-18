@@ -44,6 +44,38 @@ That was the point.`,
     },
 
     {
+      slug: 'drena',
+      name: 'Drena',
+      title: 'Not a Hero. Not Yet.',
+
+      story: `When raiders destroyed her village, Drena survived by hiding while others fought. Guilt never left her.
+
+Armed with a worn machete and stubborn determination, she wandered from settlement to settlement, learning harsh lessons with every mistake. The scar across her eye reminds her of the day hesitation nearly killed her.
+
+She isn't the strongest warrior. She isn't fearless.
+
+But every day she chooses to keep moving forward.
+
+Sometimes, that's where heroes begin.`,
+
+      profile_image_url:
+        'https://res.cloudinary.com/dpy2frmzi/image/upload/v1781635343/new-ava-propic_cbx0jo.png',
+
+      full_body_image_url:
+        'https://res.cloudinary.com/dpy2frmzi/image/upload/v1781635343/new-ava-fullbody_gg5swq.png',
+
+      unlock_category: 'beginner',
+
+      unlock_requirement: {
+        type: 'default',
+      },
+
+      revoke_requirement: Prisma.JsonNull,
+
+      is_default: false,
+    },
+
+    {
       slug: 'renji',
       name: 'Renji',
       title: 'Consistency over intensity.',

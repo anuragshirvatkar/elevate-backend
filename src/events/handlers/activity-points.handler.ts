@@ -44,18 +44,24 @@ export class ActivityPointsHandler {
       return;
     }
 
-    let isSecondActivity = false;
+    let completionRank = 0;
     if (section === 'power' || section === 'craft') {
-      const sameDayCount = await this.prisma.user_activities.count({
-        where: {
-          user_id: userId,
-          section,
-          date: activity.date,
-          did_user_do: true,
-          id: { not: activityLogId },
-        },
-      });
-      isSecondActivity = sameDayCount >= 1;
+      if (!activity.did_user_do) {
+        completionRank = -1;
+      } else {
+        const completedLogs = await this.prisma.user_activities.findMany({
+          where: {
+            user_id: userId,
+            section,
+            date: activity.date,
+            did_user_do: true,
+          },
+          orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+          select: { id: true },
+        });
+        const idx = completedLogs.findIndex((log) => log.id === activityLogId);
+        completionRank = idx >= 0 ? idx : completedLogs.length;
+      }
     }
 
     const restDays: string[] = Array.isArray(setup?.rest_days)
@@ -70,7 +76,7 @@ export class ActivityPointsHandler {
       hasDescription: !!(activity.description && activity.description.trim()),
       date: activity.date,
       restDays,
-      isSecondActivity,
+      completionRank,
     });
 
     const aggregate = await this.prisma.points_ledger.aggregate({
@@ -114,9 +120,9 @@ export class ActivityPointsHandler {
     hasDescription: boolean;
     date: Date;
     restDays: string[];
-    isSecondActivity: boolean;
+    completionRank?: number;
   }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, isSecondActivity } = params;
+    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, completionRank = 0 } = params;
 
     const dayName = DAY_NAMES[date.getDay()];
     const isRestDay = restDays.includes(dayName);
@@ -124,7 +130,8 @@ export class ActivityPointsHandler {
     switch (section) {
       case 'power': {
         if (!didUserDo) return 0;
-        if (isSecondActivity) return 5;
+        if (completionRank >= 2) return 0;
+        if (completionRank === 1) return 5;
         let pts = 10;
         if (hasDescription) pts += 2;
         if (isRestDay) pts += 15;
@@ -141,7 +148,8 @@ export class ActivityPointsHandler {
 
       case 'craft': {
         if (!didUserDo) return 0;
-        if (isSecondActivity) return 5;
+        if (completionRank >= 2) return 0;
+        if (completionRank === 1) return 5;
         let pts = 10;
         if (hours != null && hours > 2) {
           const extraHours = Math.floor(hours - 2);

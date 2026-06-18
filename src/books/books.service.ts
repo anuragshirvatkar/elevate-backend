@@ -1,10 +1,15 @@
-import { Injectable, BadRequestException, ConflictException, Logger } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
+import type { Response } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
+import { CloudinaryService } from '../common/cloudinary/cloudinary.service';
 import { CreateCustomBookDto } from './dto/create-custom-book.dto';
 import { BookResponseDto } from './dto/book-response.dto';
+import { BookSummaryResponseDto } from './dto/book-summary-response.dto';
+import { BookSummaryViewDto } from './dto/book-summary-view.dto';
 import { EditSummaryDto } from '../setup/dto/mind-setup.dto';
+import { generateBookSummaryPdf, buildSummaryPdfFilename } from './book-summary-pdf';
 
 @Injectable()
 export class BooksService {
@@ -14,6 +19,7 @@ export class BooksService {
   constructor(
     private prisma: PrismaService,
     private configService: ConfigService,
+    private cloudinaryService: CloudinaryService,
   ) {
     this.openai = new OpenAI({ apiKey: this.configService.getOrThrow<string>('OPENAI_API_KEY') });
   }
@@ -107,11 +113,17 @@ export class BooksService {
     return { success: true, message: 'Book deleted successfully' };
   }
 
-  async generateSummary(userId: string, bookId: string) {
-    const book = await this.prisma.user_books.findUnique({
-      where: { id: bookId },
-      select: { user_id: true, title: true },
-    });
+  async generateSummary(userId: string, bookId: string): Promise<BookSummaryResponseDto | { success: false; message: string }> {
+    const [book, user] = await Promise.all([
+      this.prisma.user_books.findUnique({
+        where: { id: bookId },
+        select: { user_id: true, title: true },
+      }),
+      this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { username: true },
+      }),
+    ]);
 
     if (!book) {
       throw new BadRequestException({ success: false, message: 'Book not found' });
@@ -120,6 +132,8 @@ export class BooksService {
     if (book.user_id !== userId) {
       throw new BadRequestException({ success: false, message: 'Invalid book ownership' });
     }
+
+    const writerName = user?.username ?? 'Reader';
 
     const activities = await this.prisma.user_activities.findMany({
       where: {
@@ -148,45 +162,57 @@ export class BooksService {
       };
     }
 
-    const reflections = activities.map((a) => `Day ${a.date.toISOString().slice(0, 10)}:\n"${a.description}"`).join('\n\n');
+    const reflections = activities
+      .map((a) => `Day ${a.date.toISOString().slice(0, 10)}:\n"${a.description}"`)
+      .join('\n\n');
+
+    const { maxTokens, lengthGuide } = this.computeSummaryScale(
+      activities.length,
+      combinedContent.length,
+    );
 
     const prompt = `Book: ${book.title}
 
-User reflections:
+User reflections (${activities.length} entries, ${combinedContent.length} characters total):
 ${reflections}
 
-Create a concise personal summary of what this user learned while reading this book.
+Create a personal summary of what this user learned while reading this book.
 Do not generate a generic internet summary.
-Only summarize the user's actual reflections and learning.`;
+Only summarize the user's actual reflections and learning.
+
+Length: ${lengthGuide}`;
 
     try {
       const response = await this.openai.chat.completions.create({
         model: this.configService.get<string>('OPENAI_MODEL', 'gpt-4o-mini'),
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500,
+        max_tokens: maxTokens,
       });
 
-      const summary = response.choices[0]?.message?.content ?? '';
+      const summary = response.choices[0]?.message?.content?.trim() ?? '';
+      if (!summary) {
+        throw new BadRequestException({ success: false, message: 'Failed to generate summary' });
+      }
 
-      await this.prisma.user_books.update({
-        where: { id: bookId },
-        data: { ai_summary: summary } as any,
-      });
-
-      this.logger.log(`AI summary generated: userId=${userId} bookId=${bookId}`);
-
-      return { success: true, summary };
+      return this.publishSummaryPdf(userId, bookId, book.title, writerName, summary);
     } catch (error) {
+      if (error instanceof BadRequestException) throw error;
       this.logger.error(`Failed to generate AI summary for bookId=${bookId}: ${String(error)}`);
       throw new BadRequestException({ success: false, message: 'Failed to generate summary' });
     }
   }
 
-  async editSummary(userId: string, bookId: string, dto: EditSummaryDto) {
-    const book = await this.prisma.user_books.findUnique({
-      where: { id: bookId },
-      select: { user_id: true },
-    });
+  async editSummary(userId: string, bookId: string, dto: EditSummaryDto): Promise<BookSummaryResponseDto> {
+    const [book, user] = await Promise.all([
+      this.prisma.user_books.findUnique({
+        where: { id: bookId },
+        select: { user_id: true, title: true },
+      }),
+      this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { username: true },
+      }),
+    ]);
 
     if (!book) {
       throw new BadRequestException({ success: false, message: 'Book not found' });
@@ -196,11 +222,229 @@ Only summarize the user's actual reflections and learning.`;
       throw new BadRequestException({ success: false, message: 'Invalid book ownership' });
     }
 
-    await this.prisma.user_books.update({
-      where: { id: bookId },
-      data: { ai_summary: dto.summary } as any,
+    const writerName = user?.username ?? 'Reader';
+    const summary = dto.summary.trim();
+
+    if (!summary) {
+      throw new BadRequestException({ success: false, message: 'Summary must not be empty' });
+    }
+
+    return this.publishSummaryPdf(userId, bookId, book.title, writerName, summary);
+  }
+
+  private async publishSummaryPdf(
+    userId: string,
+    bookId: string,
+    bookName: string,
+    writerName: string,
+    summary: string,
+  ): Promise<BookSummaryResponseDto> {
+    const pdfBuffer = await generateBookSummaryPdf({
+      bookTitle: bookName,
+      writerName,
+      summary,
     });
 
-    return { success: true };
+    const pdfFilename = buildSummaryPdfFilename(writerName, bookName);
+
+    const upload = await this.cloudinaryService.uploadPdfBuffer(
+      pdfBuffer,
+      'book-summaries',
+      pdfFilename,
+    );
+
+    await this.prisma.user_books.update({
+      where: { id: bookId },
+      data: {
+        ai_summary: summary,
+        summary_pdf_url: upload.secure_url,
+        updated_at: new Date(),
+      },
+    });
+
+    this.logger.log(`Book summary PDF published: userId=${userId} bookId=${bookId}`);
+
+    const pdfUrl = this.getSummaryPdfPath(bookId);
+
+    return {
+      success: true,
+      bookName,
+      writerName,
+      pdfUrl,
+      pdfFilename,
+      summary,
+    };
+  }
+
+  async markBookComplete(
+    userId: string,
+    bookId: string,
+  ): Promise<{ success: boolean; userBookId: string; isCompleted: boolean }> {
+    const book = await this.prisma.user_books.findUnique({
+      where: { id: bookId },
+      select: { user_id: true, is_completed: true },
+    });
+
+    if (!book) {
+      throw new NotFoundException('Book not found');
+    }
+
+    if (book.user_id !== userId) {
+      throw new BadRequestException('Invalid book ownership');
+    }
+
+    if (book.is_completed) {
+      return { success: true, userBookId: bookId, isCompleted: true };
+    }
+
+    await this.prisma.user_books.update({
+      where: { id: bookId },
+      data: {
+        is_completed: true,
+        completed_at: new Date(),
+        updated_at: new Date(),
+      },
+    });
+
+    this.logger.log(`Book marked complete: userId=${userId} bookId=${bookId}`);
+
+    return { success: true, userBookId: bookId, isCompleted: true };
+  }
+
+  async getSummaryView(userId: string, bookId: string): Promise<BookSummaryViewDto> {
+    const book = await this.prisma.user_books.findUnique({
+      where: { id: bookId },
+      select: {
+        user_id: true,
+        title: true,
+        ai_summary: true,
+        summary_pdf_url: true,
+        user: { select: { username: true } },
+      },
+    });
+
+    if (!book) {
+      throw new NotFoundException('Book not found');
+    }
+
+    if (book.user_id !== userId) {
+      throw new BadRequestException('Invalid book ownership');
+    }
+
+    if (!book.ai_summary && !book.summary_pdf_url) {
+      throw new NotFoundException('Summary not found for this book');
+    }
+
+    const writerName = book.user?.username ?? 'reader';
+
+    return {
+      bookName: book.title,
+      writerName,
+      summary: book.ai_summary ?? '',
+      pdfUrl: this.getSummaryPdfPath(bookId),
+      pdfFilename: buildSummaryPdfFilename(writerName, book.title),
+    };
+  }
+
+  getSummaryPdfPath(bookId: string): string {
+    return `/books/${bookId}/summary-pdf`;
+  }
+
+  async streamSummaryPdf(
+    userId: string,
+    bookId: string,
+    res: Response,
+    download = false,
+  ): Promise<void> {
+    const book = await this.prisma.user_books.findUnique({
+      where: { id: bookId },
+      select: {
+        user_id: true,
+        title: true,
+        ai_summary: true,
+        summary_pdf_url: true,
+        user: { select: { username: true } },
+      },
+    });
+
+    if (!book) {
+      throw new NotFoundException('Book not found');
+    }
+
+    if (book.user_id !== userId) {
+      throw new BadRequestException('Invalid book ownership');
+    }
+
+    if (!book.summary_pdf_url && !book.ai_summary) {
+      throw new NotFoundException('Summary PDF not found for this book');
+    }
+
+    const writerName = book.user?.username ?? 'reader';
+    const filename = buildSummaryPdfFilename(writerName, book.title);
+
+    let buffer: Buffer;
+    if (book.ai_summary) {
+      buffer = await generateBookSummaryPdf({
+        bookTitle: book.title,
+        writerName,
+        summary: book.ai_summary,
+      });
+    } else {
+      buffer = await this.cloudinaryService.downloadRawPdf(book.summary_pdf_url!);
+    }
+
+    const disposition = download ? 'attachment' : 'inline';
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `${disposition}; filename="${filename}"`,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, max-age=3600',
+    });
+
+    res.send(buffer);
+  }
+
+  /** Scale AI output length with how much reflection data the user provided. */
+  private computeSummaryScale(
+    reflectionCount: number,
+    combinedContentLength: number,
+  ): { maxTokens: number; lengthGuide: string } {
+    if (combinedContentLength >= 2500 || reflectionCount >= 10) {
+      return {
+        maxTokens: 2500,
+        lengthGuide:
+          'Write a comprehensive personal reading summary in 8-12 paragraphs. Cover every major theme, insight, and lesson from the reflections. Include specific examples the user mentioned. Do not omit or merge distinct reflections.',
+      };
+    }
+
+    if (combinedContentLength >= 1500 || reflectionCount >= 7) {
+      return {
+        maxTokens: 1800,
+        lengthGuide:
+          'Write a thorough personal summary in 6-8 paragraphs. Cover all major themes and key learnings with enough depth to reflect what the user shared.',
+      };
+    }
+
+    if (combinedContentLength >= 800 || reflectionCount >= 4) {
+      return {
+        maxTokens: 1200,
+        lengthGuide:
+          'Write a detailed personal summary in 4-6 paragraphs covering the main themes and learnings from the reflections.',
+      };
+    }
+
+    if (combinedContentLength >= 300 || reflectionCount >= 2) {
+      return {
+        maxTokens: 750,
+        lengthGuide:
+          'Write a solid personal summary in 2-4 paragraphs covering the core learnings from the reflections.',
+      };
+    }
+
+    return {
+      maxTokens: 450,
+      lengthGuide: 'Write a concise personal summary in 1-2 paragraphs.',
+    };
   }
 }

@@ -17,6 +17,7 @@ export class LeaderboardController {
     summary: 'Get leaderboard',
     description:
       'Returns ranked users by points for the specified period and section. ' +
+      'Periods are rolling windows from request time: weekly = last 7 days, monthly = last 30 days, yearly = last 365 days, all_time/all = no limit. ' +
       'Also returns the authenticated user\'s current rank and points.',
   })
   @ApiOkResponse({

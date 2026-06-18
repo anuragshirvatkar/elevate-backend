@@ -6,12 +6,18 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserGender {
+  male
+  female
+}
+
 model users {
-  id                   String    @id @default(uuid()) @db.Uuid
-  email                String?   @unique
-  google_id            String?   @unique
-  username             String    @unique @db.VarChar(50)
-  date_of_birth        DateTime? @db.Date
+  id                   String     @id @default(uuid()) @db.Uuid
+  email                String?    @unique
+  google_id            String?    @unique
+  username             String     @unique @db.VarChar(50)
+  date_of_birth        DateTime?  @db.Date
+  gender               UserGender?
   onboarding_completed Boolean   @default(false)
   timezone             String    @default("Asia/Kolkata")
   last_login_at        DateTime?
@@ -126,6 +132,7 @@ model user_books {
   is_completed    Boolean?  @default(false)
   completed_at    DateTime?
   ai_summary      String?   @db.Text
+  summary_pdf_url String?
   created_at      DateTime?
   updated_at      DateTime?
 

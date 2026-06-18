@@ -1,6 +1,12 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AvatarsService } from '../avatars/avatars.service';
+import { shouldShowPurityAnalytics } from '../constants/user-gender';
+import { isBeginnerAvatar } from '../avatars/constants/avatar-slugs';
+import {
+  filterAchievementsForGender,
+  filterAvatarsForGender,
+} from '../utils/purity-content';
 
 @Injectable()
 export class ProfileService {
@@ -12,6 +18,8 @@ export class ProfileService {
   ) {}
 
   async getProfile(userId: string) {
+    await this.avatarsService.syncBeginnerAvatars(userId);
+
     const [
       user,
       socialLinks,
@@ -25,7 +33,6 @@ export class ProfileService {
       streaks,
       pointsAggregate,
       mindSetup,
-      avatarProgress,
     ] = await Promise.all([
       this.prisma.users.findUnique({
         where: { id: userId },
@@ -34,6 +41,7 @@ export class ProfileService {
           email: true,
           username: true,
           date_of_birth: true,
+          gender: true,
           onboarding_completed: true,
           last_seen_at: true,
           created_at: true,
@@ -91,14 +99,18 @@ export class ProfileService {
         where: { user_id_section: { user_id: userId, section: 'mind' } },
         select: { is_active: true },
       }),
-
-      this.avatarsService.getAvatarsProgress(userId),
     ]);
 
     if (!user) throw new NotFoundException('User not found');
 
+    const avatarProgress = await this.avatarsService.getAvatarsProgress(userId, user.gender);
+
+    const showPurity = shouldShowPurityAnalytics(user.gender);
+
     const streakMap = new Map(streaks.map((s) => [s.section, s]));
-    const sections = ['power', 'mind', 'craft', 'purity'];
+    const sections = showPurity
+      ? (['power', 'mind', 'craft', 'purity'] as const)
+      : (['power', 'mind', 'craft'] as const);
     const currentStreaks: Record<string, number> = {};
     const longestStreaks: Record<string, number> = {};
     for (const section of sections) {
@@ -128,9 +140,11 @@ export class ProfileService {
       historyByAvatar.get(h.avatar_id)!.push(h);
     }
 
-    const avatarsOut = allAvatars.map((av) => {
+    const avatarsOut = filterAvatarsForGender(allAvatars, user.gender).map((av) => {
       const ua = userAvatarMap.get(av.id);
       const history = historyByAvatar.get(av.id) ?? [];
+      const beginner = isBeginnerAvatar(av.slug);
+
       return {
         id: av.id,
         name: av.name,
@@ -142,13 +156,13 @@ export class ProfileService {
         unlockCategory: av.unlock_category ?? null,
         unlockRequirement: av.unlock_requirement ?? null,
         revokeRequirement: av.revoke_requirement ?? null,
-        isUnlocked: ua?.is_unlocked ?? false,
+        isUnlocked: ua?.is_unlocked ?? beginner,
         isSelected: ua?.is_selected ?? false,
-        unlockCount: ua?.unlock_count ?? 0,
+        unlockCount: ua?.unlock_count ?? (beginner ? 1 : 0),
         unlockedAt: ua?.unlocked_at ? ua.unlocked_at.toISOString() : null,
         revokedAt: ua?.revoked_at ? ua.revoked_at.toISOString() : null,
         lastReason: ua?.last_reason ?? null,
-        progress: avatarProgress[av.slug] ?? null,
+        progress: avatarProgress[av.slug] ?? (beginner ? { type: 'default' as const } : null),
         history: history.map((h) => ({
           avatarId: h.avatar_id,
           avatarName: h.avatar.name,
@@ -160,12 +174,14 @@ export class ProfileService {
       };
     });
 
+    const selectedAvatar = avatarsOut.find((av) => av.isSelected) ?? null;
+
     const userAchievementMap = new Map(
       userAchievementsRows.map((ua) => [ua.achievement_id, ua]),
     );
     const countMap = new Map(achievementCounts.map((c) => [c.achievement_id, c._count.id]));
 
-    const achievementsOut = allAchievements.map((a) => {
+    const achievementsOut = filterAchievementsForGender(allAchievements, user.gender).map((a) => {
       const ua = userAchievementMap.get(a.id);
       return {
         id: a.id,
@@ -187,6 +203,7 @@ export class ProfileService {
       username: user.username,
       email: user.email ?? null,
       dateOfBirth: user.date_of_birth ? user.date_of_birth.toISOString().split('T')[0] : null,
+      gender: user.gender ?? null,
       onboardingCompleted: user.onboarding_completed,
       mindSectionActive: mindSetup ? mindSetup.is_active : true,
       joinedAt: user.created_at ? user.created_at.toISOString() : null,
@@ -198,6 +215,7 @@ export class ProfileService {
         longestStreaks,
       },
       companions: companionsOut,
+      selectedAvatar,
       avatars: avatarsOut,
       achievements: achievementsOut,
     };

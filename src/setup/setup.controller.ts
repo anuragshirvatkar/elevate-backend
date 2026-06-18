@@ -70,7 +70,7 @@ export class SetupController {
       'Finalizes onboarding. Validates all required selections are present, marks onboarding complete, unlocks the first achievement, and creates a companion message. Idempotent — safe to call if already completed.',
   })
   @ApiOkResponse({ type: CompleteResponseDto })
-  @ApiBadRequestResponse({ description: 'Missing DOB, companion, power/craft activities, or mind book' })
+  @ApiBadRequestResponse({ description: 'Missing DOB, gender, companion, power/craft activities, or mind book' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   completeOnboarding(@CurrentUser() user: { userId: string }) {
     return this.setupService.completeOnboarding(user.userId);

@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { MailService } from '../mail/mail.service';
 import { AppTrackingService } from '../app-tracking/app-tracking.service';
+import { AvatarsService } from '../avatars/avatars.service';
 import { generateUsername } from '../utils/generate-username';
 
 const REFRESH_TOKEN_EXPIRY_DAYS = 90;
@@ -27,6 +28,7 @@ export class AuthService {
     private redis: RedisService,
     private mail: MailService,
     private appTracking: AppTrackingService,
+    private avatarsService: AvatarsService,
   ) {
     this.googleClient = new OAuth2Client(
       this.configService.get<string>('GOOGLE_CLIENT_ID'),
@@ -237,48 +239,7 @@ export class AuthService {
 
   private async initializeNewUser(userId: string): Promise<void> {
     try {
-      const defaultAvatar = await this.prisma.avatars.findFirst({
-        where: { is_default: true },
-      });
-
-      if (defaultAvatar) {
-        await this.prisma.user_avatars.upsert({
-          where: {
-            user_id_avatar_id: { user_id: userId, avatar_id: defaultAvatar.id },
-          },
-          create: {
-            user_id: userId,
-            avatar_id: defaultAvatar.id,
-            is_unlocked: true,
-            is_selected: true,
-            unlocked_at: new Date(),
-            created_at: new Date(),
-            updated_at: new Date(),
-          },
-          update: {},
-        });
-
-        const existingHistory = await this.prisma.user_avatar_history.findFirst({
-          where: {
-            user_id: userId,
-            avatar_id: defaultAvatar.id,
-            event_type: 'unlocked',
-            reason: 'account_created',
-          },
-        });
-
-        if (!existingHistory) {
-          await this.prisma.user_avatar_history.create({
-            data: {
-              user_id: userId,
-              avatar_id: defaultAvatar.id,
-              event_type: 'unlocked',
-              reason: 'account_created',
-              created_at: new Date(),
-            },
-          });
-        }
-      }
+      await this.avatarsService.initializeDefaultAvatars(userId);
 
       const starterAchievement = await this.prisma.achievements.findFirst({
         where: { slug: 'new-journey-begins' },

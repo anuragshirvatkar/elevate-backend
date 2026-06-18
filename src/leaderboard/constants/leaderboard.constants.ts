@@ -1,4 +1,4 @@
-export const LEADERBOARD_PERIODS = ['weekly', 'monthly', 'yearly', 'all_time'] as const;
+export const LEADERBOARD_PERIODS = ['weekly', 'monthly', 'yearly', 'all_time', 'all'] as const;
 export const LEADERBOARD_SECTIONS = ['all', 'power', 'craft', 'mind', 'purity'] as const;
 
 export type LeaderboardPeriod = (typeof LEADERBOARD_PERIODS)[number];

@@ -12,6 +12,8 @@ import { CompanionMessageType } from '../companion-messages/companion-message-ty
 import { AchievementMessages } from '../companion-messages/templates/achievement.messages';
 import { SetupOptionsResponseDto } from './dto/setup-options-response.dto';
 import { SetupProgressResponseDto } from './dto/setup-progress-response.dto';
+import { AvatarsService } from '../avatars/avatars.service';
+import { buildSummaryPdfFilename } from '../books/book-summary-pdf';
 
 const ACTIVITY_SECTIONS = ['power', 'craft', 'mind', 'purity', 'consistency'] as const;
 const ONBOARDING_SECTIONS = ['power', 'craft', 'mind'] as const;
@@ -43,6 +45,7 @@ export class SetupService {
     private prisma: PrismaService,
     private achievementsService: AchievementsService,
     private companionMessagesService: CompanionMessagesService,
+    private avatarsService: AvatarsService,
   ) {}
 
   private async getActiveCompanion(userId: string): Promise<{ name: string; imageUrl: string | null }> {
@@ -98,7 +101,7 @@ export class SetupService {
     const [user, activeCompanion, setups] = await Promise.all([
       this.prisma.users.findUnique({
         where: { id: userId },
-        select: { onboarding_completed: true, date_of_birth: true },
+        select: { onboarding_completed: true, date_of_birth: true, gender: true },
       }),
       this.prisma.user_companions.findFirst({
         where: { user_id: userId, is_active: true },
@@ -164,6 +167,7 @@ export class SetupService {
     return {
       onboardingCompleted: user?.onboarding_completed ?? false,
       dob: formatDate(user?.date_of_birth),
+      gender: user?.gender ?? null,
       selectedCompanion: activeCompanion
         ? {
             id: activeCompanion.companion.id,
@@ -186,6 +190,13 @@ export class SetupService {
         await tx.users.update({
           where: { id: userId },
           data: { date_of_birth: new Date(dto.dob) },
+        });
+      }
+
+      if (dto.gender !== undefined) {
+        await tx.users.update({
+          where: { id: userId },
+          data: { gender: dto.gender },
         });
       }
 
@@ -400,13 +411,17 @@ export class SetupService {
       }
     });
 
+    if (dto.gender !== undefined) {
+      await this.avatarsService.applyDefaultAvatarForGender(userId, dto.gender);
+    }
+
     return this.getProgress(userId);
   }
 
   async completeOnboarding(userId: string): Promise<CompleteResponseDto> {
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
-      select: { onboarding_completed: true, date_of_birth: true },
+      select: { onboarding_completed: true, date_of_birth: true, gender: true },
     });
 
     if (user?.onboarding_completed) {
@@ -415,6 +430,10 @@ export class SetupService {
 
     if (!user?.date_of_birth) {
       throw new BadRequestException('Date of birth is required to complete onboarding.');
+    }
+
+    if (!user?.gender) {
+      throw new BadRequestException('Gender is required to complete onboarding.');
     }
 
     const [companionExists, powerSetup, craftSetup, mindSetup] = await Promise.all([
@@ -659,6 +678,12 @@ export class SetupService {
       };
     }
 
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+    const writerName = user?.username ?? 'reader';
+
     return {
       section: 'mind',
       isActive: setup.is_active ?? true,
@@ -672,7 +697,13 @@ export class SetupService {
         totalPages: usb.user_book.total_pages,
         isCompleted: usb.user_book.is_completed,
         completedAt: usb.user_book.completed_at ? usb.user_book.completed_at.toISOString().slice(0, 10) : null,
-        aiSummary: (usb.user_book as any).ai_summary ?? null,
+        aiSummary: usb.user_book.ai_summary ?? null,
+        summaryPdfUrl: usb.user_book.summary_pdf_url
+          ? `/books/${usb.user_book.id}/summary-pdf`
+          : null,
+        summaryPdfFilename: usb.user_book.summary_pdf_url
+          ? buildSummaryPdfFilename(writerName, usb.user_book.title)
+          : null,
       })),
     };
   }
@@ -815,6 +846,12 @@ export class SetupService {
 
     this.logger.log(`Mind setup updated: userId=${userId}`);
 
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+    const writerName = user?.username ?? 'reader';
+
     return {
       success: true,
       section: 'mind',
@@ -829,7 +866,13 @@ export class SetupService {
         totalPages: usb.user_book.total_pages,
         isCompleted: usb.user_book.is_completed,
         completedAt: usb.user_book.completed_at ? usb.user_book.completed_at.toISOString().slice(0, 10) : null,
-        aiSummary: (usb.user_book as any).ai_summary ?? null,
+        aiSummary: usb.user_book.ai_summary ?? null,
+        summaryPdfUrl: usb.user_book.summary_pdf_url
+          ? `/books/${usb.user_book.id}/summary-pdf`
+          : null,
+        summaryPdfFilename: usb.user_book.summary_pdf_url
+          ? buildSummaryPdfFilename(writerName, usb.user_book.title)
+          : null,
       })),
     };
   }

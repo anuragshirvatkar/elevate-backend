@@ -71,9 +71,15 @@ export class ActivitiesController {
   @ApiBearerAuth()
   @ApiOperation({
     summary: 'Get activity logs for a date',
-    description: 'Restores all activity log entries for the authenticated user on a given date. Includes image URLs.',
+    description:
+      'Returns activity log entries for the authenticated user. Pass a YYYY-MM-DD date for one day, or All to return every log. Includes image URLs and net points per log (positive = gained, negative = lost).',
   })
-  @ApiQuery({ name: 'date', required: true, example: '2026-05-17', description: 'Date in YYYY-MM-DD format' })
+  @ApiQuery({
+    name: 'date',
+    required: true,
+    example: '2026-05-17',
+    description: 'Date in YYYY-MM-DD format, or All for every log',
+  })
   @ApiOkResponse({ type: [ActivityLogEntryDto] })
   @ApiBadRequestResponse({ description: 'Invalid or missing date' })
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })

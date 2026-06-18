@@ -24,6 +24,6 @@ export class AdminTicketsQueryDto {
 
   @ApiPropertyOptional({ example: 'bug', enum: ['bug', 'feature_request', 'payment', 'account', 'other'] })
   @IsOptional()
-  @IsIn(['bug', 'feature_request', 'payment', 'account', 'other'])
+  @IsIn(['bug', 'feature_request', 'feedback', 'payment', 'account', 'other'])
   issueType?: string;
 }

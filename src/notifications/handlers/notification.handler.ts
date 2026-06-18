@@ -1,9 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { getLocalWeekMonday } from '../../utils/date.utils';
-
-const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 import { PrismaService } from '../../prisma/prisma.service';
+import { getLeaderboardPeriodStart } from '../../leaderboard/leaderboard-period.utils';
 import { NotificationsService } from '../notifications.service';
 import {
   NotificationTypes,
@@ -271,7 +269,9 @@ export class NotificationHandler {
     );
     if (cooldown) return;
 
-    const weekStart = this.getWeekMonday();
+    const weekStart = getLeaderboardPeriodStart('weekly');
+    if (!weekStart) return;
+
     const sectionWhere = section !== 'all' ? { section } : {};
 
     const [myAggregate, top3] = await Promise.all([
@@ -312,9 +312,5 @@ export class NotificationHandler {
       COOLDOWN_TTL[NotificationTypes.NEAR_TOP3],
       { lastSent: new Date().toISOString() },
     );
-  }
-
-  private getWeekMonday(): Date {
-    return new Date(getLocalWeekMonday('Asia/Kolkata').getTime() - IST_OFFSET_MS);
   }
 }

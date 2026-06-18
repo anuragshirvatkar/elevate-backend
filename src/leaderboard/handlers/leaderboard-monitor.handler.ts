@@ -9,6 +9,7 @@ import {
   LEADERBOARD_SECTIONS,
   LEADERBOARD_REDIS_KEY,
 } from '../constants/leaderboard.constants';
+import { getLeaderboardPeriodStart } from '../leaderboard-period.utils';
 
 interface RankEntry {
   userId: string;
@@ -79,7 +80,9 @@ export class LeaderboardMonitorHandler {
   }
 
   private async getWeeklyTop3(section: string): Promise<RankEntry[]> {
-    const weekStart = this.getWeekMonday();
+    const weekStart = getLeaderboardPeriodStart('weekly');
+    if (!weekStart) return [];
+
     const sectionWhere = section !== 'all' ? { section } : {};
 
     const groups = await this.prisma.points_ledger.groupBy({
@@ -91,15 +94,5 @@ export class LeaderboardMonitorHandler {
     });
 
     return groups.map((g, i) => ({ userId: g.user_id, rank: i + 1 }));
-  }
-
-  private getWeekMonday(): Date {
-    const now = new Date();
-    const day = now.getUTCDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    const monday = new Date(now);
-    monday.setUTCDate(now.getUTCDate() + offset);
-    monday.setUTCHours(0, 0, 0, 0);
-    return monday;
   }
 }

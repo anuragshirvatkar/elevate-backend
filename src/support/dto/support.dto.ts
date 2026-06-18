@@ -10,7 +10,7 @@ export class UploadImagesDto {
 export class CreateSupportTicketDto {
   @ApiProperty({ example: 'bug' })
   @IsString()
-  @IsIn(['bug', 'feature', 'feedback', 'account', 'other'])
+  @IsIn(['bug', 'feature_request', 'feedback', 'payment', 'account', 'other'])
   issueType: string;
 
   @ApiPropertyOptional({ example: 'App freezes during logging' })

@@ -11,6 +11,7 @@ import { LeaderboardRankChangedEvent } from '../../events/leaderboard-rank-chang
 import { ActivityLoggedEvent } from '../../events/activity-logged.event';
 import { ACHIEVEMENT_COMPANION_MESSAGES } from '../templates/achievement.messages';
 import { AVATAR_COMPANION_MESSAGES } from '../templates/avatar.messages';
+import { getLeaderboardPeriodStart } from '../../leaderboard/leaderboard-period.utils';
 
 const RECOVERY_COOLDOWN_DAYS = 14;
 const INACTIVITY_THRESHOLD_DAYS = 3;
@@ -168,7 +169,9 @@ export class CompanionHandler {
   }
 
   private async checkLeaderboardNear(userId: string, section: string): Promise<void> {
-    const weekStart = this.getWeekMonday();
+    const weekStart = getLeaderboardPeriodStart('weekly');
+    if (!weekStart) return;
+
     const sectionWhere = section !== 'all' ? { section } : {};
 
     const topThreeGroups = await this.prisma.points_ledger.groupBy({
@@ -281,15 +284,5 @@ export class CompanionHandler {
 
   private formatSection(section: string): string {
     return section.charAt(0).toUpperCase() + section.slice(1);
-  }
-
-  private getWeekMonday(): Date {
-    const now = new Date();
-    const day = now.getUTCDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    const monday = new Date(now);
-    monday.setUTCDate(now.getUTCDate() + offset);
-    monday.setUTCHours(0, 0, 0, 0);
-    return monday;
   }
 }

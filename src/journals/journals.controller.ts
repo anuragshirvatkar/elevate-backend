@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Put,
+  Post,
   Body,
   Query,
   UseGuards,
@@ -21,6 +22,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JournalsService, JournalEntry } from './journals.service';
 import { UpsertJournalDto } from './dto/upsert-journal.dto';
+import { TodayGoalResponseDto } from './dto/today-goal-response.dto';
 
 @ApiTags('Journals')
 @Controller('journals')
@@ -45,6 +47,52 @@ export class JournalsController {
     @Body() dto: UpsertJournalDto,
   ): Promise<JournalEntry> {
     return this.journalsService.upsert(user.userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('today-goal')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Get today's goal popup for homescreen",
+    description:
+      "Returns yesterday's journal tomorrow_mission as today's goal. Hidden if dismissed for the day or no mission was set.",
+  })
+  @ApiQuery({
+    name: 'today',
+    required: false,
+    example: '2026-06-15',
+    description: "Client's local today date (YYYY-MM-DD).",
+  })
+  @ApiOkResponse({ type: TodayGoalResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async getTodayGoal(
+    @CurrentUser() user: { userId: string },
+    @Query('today') today?: string,
+  ): Promise<TodayGoalResponseDto> {
+    return this.journalsService.getTodayGoal(user.userId, today);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('today-goal/dismiss')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "Dismiss today's goal popup",
+    description: 'Hides the goal popup for the rest of the local day.',
+  })
+  @ApiQuery({
+    name: 'today',
+    required: false,
+    example: '2026-06-15',
+    description: "Client's local today date (YYYY-MM-DD).",
+  })
+  @ApiOkResponse({ description: '{ success: true }' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  async dismissTodayGoal(
+    @CurrentUser() user: { userId: string },
+    @Query('today') today?: string,
+  ): Promise<{ success: boolean }> {
+    return this.journalsService.dismissTodayGoal(user.userId, today);
   }
 
   @UseGuards(JwtAuthGuard)

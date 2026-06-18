@@ -42,4 +42,10 @@ export class ActivityLogEntryDto {
 
   @ApiProperty({ example: '2026-05-17' })
   date: string;
+
+  @ApiProperty({
+    example: 12,
+    description: 'Net points for this log. Positive = gained, negative = lost, 0 = none.',
+  })
+  points: number;
 }

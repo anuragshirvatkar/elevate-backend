@@ -286,18 +286,24 @@ export class ActivitiesService {
       select: { rest_days: true },
     });
 
-    let isSecondActivity = false;
+    let completionRank = 0;
     if ((dto.section === 'power' || dto.section === 'craft') && dto.activityId) {
-      const otherCount = await this.prisma.user_activities.count({
-        where: {
-          user_id: userId,
-          section: dto.section,
-          date: activityDate,
-          id: { not: record.id },
-          did_user_do: true,
-        },
-      });
-      isSecondActivity = otherCount > 0;
+      if (!(activity?.did_user_do ?? false)) {
+        completionRank = -1;
+      } else {
+        const completedLogs = await this.prisma.user_activities.findMany({
+          where: {
+            user_id: userId,
+            section: dto.section,
+            date: activityDate,
+            did_user_do: true,
+          },
+          orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+          select: { id: true },
+        });
+        const idx = completedLogs.findIndex((log) => log.id === record.id);
+        completionRank = idx >= 0 ? idx : completedLogs.length;
+      }
     }
 
     const points = this.calculatePoints({
@@ -308,7 +314,7 @@ export class ActivitiesService {
       hasDescription: !!(activity?.description && activity.description.trim()),
       date: activity?.date ?? activityDate,
       restDays: Array.isArray(setup?.rest_days) ? (setup.rest_days as string[]) : [],
-      isSecondActivity,
+      completionRank,
     });
 
     return {
@@ -327,9 +333,9 @@ export class ActivitiesService {
     hasDescription: boolean;
     date: Date;
     restDays: string[];
-    isSecondActivity?: boolean;
+    completionRank?: number;
   }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, isSecondActivity = false } = params;
+    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, completionRank = 0 } = params;
 
     const dayName = DAY_NAMES[date.getDay()];
     const isRestDay = restDays.includes(dayName);
@@ -338,7 +344,10 @@ export class ActivitiesService {
       case 'power':
       case 'mind': {
         if (!didUserDo) return 0;
-        if (isSecondActivity) return 5;
+        if (section === 'power') {
+          if (completionRank >= 2) return 0;
+          if (completionRank === 1) return 5;
+        }
         let pts = 10;
         if (hasDescription) pts += 2;
         if (isRestDay) pts += 15;
@@ -347,7 +356,8 @@ export class ActivitiesService {
 
       case 'craft': {
         if (!didUserDo) return 0;
-        if (isSecondActivity) return 5;
+        if (completionRank >= 2) return 0;
+        if (completionRank === 1) return 5;
         let pts = 10;
         if (hours != null && hours > 2) {
           const extraHours = Math.floor(hours - 2);
@@ -373,22 +383,74 @@ export class ActivitiesService {
     userId: string,
     date: string,
   ): Promise<ActivityLogEntryDto[]> {
-    const activityDate = new Date(date);
-    if (isNaN(activityDate.getTime())) {
-      throw new BadRequestException('Invalid date format. Use YYYY-MM-DD.');
+    if (!date?.trim()) {
+      throw new BadRequestException('date is required. Use YYYY-MM-DD or All.');
     }
 
+    const isAll = date.toLowerCase() === 'all';
+
     const logs = await this.prisma.user_activities.findMany({
-      where: { user_id: userId, date: activityDate },
+      where: isAll
+        ? { user_id: userId }
+        : { user_id: userId, date: this.parseActivityDate(date) },
       include: {
         activity_images: { select: { image_url: true } },
         user_book: { select: { title: true } },
         activity: { select: { name: true } },
       },
-      orderBy: { created_at: 'asc' },
+      orderBy: isAll ? [{ date: 'desc' }, { created_at: 'asc' }] : { created_at: 'asc' },
     });
 
-    return logs.map((log) => ({
+    const logIds = logs.map((log) => log.id);
+    const pointsByLogId = new Map<string, number>();
+
+    if (logIds.length > 0) {
+      const aggregates = await this.prisma.points_ledger.groupBy({
+        by: ['reference_id'],
+        where: {
+          user_id: userId,
+          reference_id: { in: logIds },
+        },
+        _sum: { points: true },
+      });
+
+      for (const agg of aggregates) {
+        if (agg.reference_id) {
+          pointsByLogId.set(agg.reference_id, agg._sum.points ?? 0);
+        }
+      }
+    }
+
+    return logs.map((log) => this.toActivityLogEntry(log, pointsByLogId));
+  }
+
+  private parseActivityDate(date: string): Date {
+    const activityDate = new Date(date);
+    if (isNaN(activityDate.getTime())) {
+      throw new BadRequestException('Invalid date format. Use YYYY-MM-DD or All.');
+    }
+    return activityDate;
+  }
+
+  private toActivityLogEntry(
+    log: {
+      id: string;
+      section: string;
+      activity_id: string | null;
+      user_book_id: string | null;
+      did_user_do: boolean | null;
+      hours: unknown;
+      relapse_count: number | null;
+      description: string | null;
+      reason_if_no: string | null;
+      date: Date;
+      activity_images: { image_url: string }[];
+      user_book: { title: string } | null;
+      activity: { name: string } | null;
+    },
+    pointsByLogId: Map<string, number>,
+  ): ActivityLogEntryDto {
+    return {
       id: log.id,
       section: log.section,
       activityId: log.activity_id ?? undefined,
@@ -402,7 +464,8 @@ export class ActivitiesService {
       reasonIfNo: log.reason_if_no ?? undefined,
       images: log.activity_images.map((img) => img.image_url),
       date: log.date.toISOString().split('T')[0],
-    }));
+      points: pointsByLogId.get(log.id) ?? 0,
+    };
   }
 
   private async handleActivityMarkedAsFailed(userId: string, section: string): Promise<void> {

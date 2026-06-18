@@ -1,13 +1,24 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AvatarsService } from '../avatars/avatars.service';
+import { shouldShowPurityAnalytics } from '../constants/user-gender';
+import {
+  filterAchievementsForGender,
+  isPurityAvatar,
+} from '../utils/purity-content';
 
 @Injectable()
 export class PublicProfileService {
   private readonly logger = new Logger(PublicProfileService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly avatarsService: AvatarsService,
+  ) {}
 
   async getPublicProfile(viewerId: string, targetUserId: string) {
+    await this.avatarsService.syncBeginnerAvatars(targetUserId);
+
     const [
       user,
       socialLinks,
@@ -24,6 +35,7 @@ export class PublicProfileService {
         select: {
           id: true,
           username: true,
+          gender: true,
           last_seen_at: true,
           created_at: true,
         },
@@ -71,8 +83,12 @@ export class PublicProfileService {
 
     if (!user) throw new NotFoundException('User not found');
 
+    const showPurity = shouldShowPurityAnalytics(user.gender);
+
     const streakMap = new Map(streaks.map((s) => [s.section, s]));
-    const sections = ['power', 'mind', 'craft', 'purity'];
+    const sections = showPurity
+      ? (['power', 'mind', 'craft', 'purity'] as const)
+      : (['power', 'mind', 'craft'] as const);
     const currentStreaks: Record<string, number> = {};
     const longestStreaks: Record<string, number> = {};
     for (const section of sections) {
@@ -86,7 +102,9 @@ export class PublicProfileService {
       historyByAvatar.get(h.avatar_id)!.push(h);
     }
 
-    const avatarsOut = selectedUserAvatars.map((ua) => {
+    const avatarsOut = selectedUserAvatars
+      .filter((ua) => showPurity || !isPurityAvatar(ua.avatar))
+      .map((ua) => {
       const history = historyByAvatar.get(ua.avatar_id) ?? [];
       return {
         id: ua.avatar.id,
@@ -116,12 +134,14 @@ export class PublicProfileService {
       };
     });
 
+    const selectedAvatar = avatarsOut[0] ?? null;
+
     const userAchievementMap = new Map(
       userAchievementsRows.map((ua) => [ua.achievement_id, ua]),
     );
     const countMap = new Map(achievementCounts.map((c) => [c.achievement_id, c._count.id]));
 
-    const achievementsOut = allAchievements.map((a) => {
+    const achievementsOut = filterAchievementsForGender(allAchievements, user.gender).map((a) => {
       const ua = userAchievementMap.get(a.id);
       return {
         id: a.id,
@@ -149,6 +169,7 @@ export class PublicProfileService {
         currentStreaks,
         longestStreaks,
       },
+      selectedAvatar,
       avatars: avatarsOut,
       achievements: achievementsOut,
     };
