@@ -17,7 +17,7 @@ const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'frid
 const AVATAR_SECTION_CONFIG: Record<string, { slug: string; threshold: number; requiredWeeks: number; label: string }> = {
   power: { slug: 'aelius', threshold: 4, requiredWeeks: 2, label: 'Power' },
   craft: { slug: 'renji', threshold: 3, requiredWeeks: 3, label: 'Craft' },
-  mind: { slug: 'verin', threshold: 3, requiredWeeks: 3, label: 'Mind' },
+  mind: { slug: 'verin', threshold: 3, requiredWeeks: 2, label: 'Mind' },
 };
 
 const STREAK_ACHIEVEMENT_CONFIG: Record<string, Array<{ slug: string; threshold: number; label: string }>> = {

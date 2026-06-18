@@ -12,7 +12,6 @@ import { CompanionMessagesService } from '../companion-messages/companion-messag
 
 const CUSTOM_SECTIONS = ['power', 'craft'] as const;
 const LOG_SECTIONS = ['power', 'craft', 'mind', 'purity'] as const;
-const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 const MAX_CUSTOM_ACTIVITIES = 5;
 
 @Injectable()
@@ -264,58 +263,24 @@ export class ActivitiesService {
     event.relapseCount = dto.section === 'purity' ? dto.relapseCount : undefined;
     event.date = activityDate;
 
+    const pointsBefore = await this.prisma.points_ledger.aggregate({
+      _sum: { points: true },
+      where: { reference_id: record.id },
+    });
+
     this.eventsService.emitActivityLogged(event);
 
     this.logger.log(
       `Activity log upserted: userId=${userId} activityLogId=${record.id} date=${dto.date} operation=${operation}`,
     );
 
-    const activity = await this.prisma.user_activities.findUnique({
-      where: { id: record.id },
-      select: {
-        did_user_do: true,
-        hours: true,
-        relapse_count: true,
-        description: true,
-        date: true,
-      },
+    const pointsAfter = await this.prisma.points_ledger.aggregate({
+      _sum: { points: true },
+      where: { reference_id: record.id },
     });
 
-    const setup = await this.prisma.user_setups.findFirst({
-      where: { user_id: userId, section: dto.section },
-      select: { rest_days: true },
-    });
-
-    let completionRank = 0;
-    if ((dto.section === 'power' || dto.section === 'craft') && dto.activityId) {
-      if (!(activity?.did_user_do ?? false)) {
-        completionRank = -1;
-      } else {
-        const completedLogs = await this.prisma.user_activities.findMany({
-          where: {
-            user_id: userId,
-            section: dto.section,
-            date: activityDate,
-            did_user_do: true,
-          },
-          orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
-          select: { id: true },
-        });
-        const idx = completedLogs.findIndex((log) => log.id === record.id);
-        completionRank = idx >= 0 ? idx : completedLogs.length;
-      }
-    }
-
-    const points = this.calculatePoints({
-      section: dto.section,
-      didUserDo: activity?.did_user_do ?? null,
-      relapseCount: activity?.relapse_count ?? null,
-      hours: activity?.hours != null ? Number(activity.hours) : null,
-      hasDescription: !!(activity?.description && activity.description.trim()),
-      date: activity?.date ?? activityDate,
-      restDays: Array.isArray(setup?.rest_days) ? (setup.rest_days as string[]) : [],
-      completionRank,
-    });
+    const points =
+      (pointsAfter._sum.points ?? 0) - (pointsBefore._sum.points ?? 0);
 
     return {
       success: true,
@@ -323,60 +288,6 @@ export class ActivitiesService {
       activityLogId: record.id,
       points,
     };
-  }
-
-  private calculatePoints(params: {
-    section: string;
-    didUserDo: boolean | null;
-    relapseCount: number | null;
-    hours: number | null;
-    hasDescription: boolean;
-    date: Date;
-    restDays: string[];
-    completionRank?: number;
-  }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, completionRank = 0 } = params;
-
-    const dayName = DAY_NAMES[date.getDay()];
-    const isRestDay = restDays.includes(dayName);
-
-    switch (section) {
-      case 'power':
-      case 'mind': {
-        if (!didUserDo) return 0;
-        if (section === 'power') {
-          if (completionRank >= 2) return 0;
-          if (completionRank === 1) return 5;
-        }
-        let pts = 10;
-        if (hasDescription) pts += 2;
-        if (isRestDay) pts += 15;
-        return pts;
-      }
-
-      case 'craft': {
-        if (!didUserDo) return 0;
-        if (completionRank >= 2) return 0;
-        if (completionRank === 1) return 5;
-        let pts = 10;
-        if (hours != null && hours > 2) {
-          const extraHours = Math.floor(hours - 2);
-          pts += extraHours * 2;
-        }
-        if (hasDescription) pts += 2;
-        if (isRestDay) pts += 15;
-        return pts;
-      }
-
-      case 'purity': {
-        const count = relapseCount ?? 0;
-        if (count === 0) return 10;
-        return -(20 * count);
-      }
-
-      default:
-        return 0;
-    }
   }
 
   async getActivityLogs(

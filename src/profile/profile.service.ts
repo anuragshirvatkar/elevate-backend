@@ -19,6 +19,7 @@ export class ProfileService {
 
   async getProfile(userId: string) {
     await this.avatarsService.syncBeginnerAvatars(userId);
+    await this.avatarsService.syncAllAvatarUnlocks(userId);
 
     const [
       user,

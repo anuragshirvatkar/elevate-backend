@@ -3,11 +3,10 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { calculateActivityPoints } from '../../activities/activity-points.util';
 import { ActivityLoggedEvent } from '../activity-logged.event';
 import { PointsUpdatedEvent } from '../points-updated.event';
 import { EventNames } from '../event-names';
-
-const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
 
 @Injectable()
 export class ActivityPointsHandler {
@@ -22,6 +21,78 @@ export class ActivityPointsHandler {
   async handle(event: ActivityLoggedEvent): Promise<void> {
     const { userId, activityLogId, section } = event;
 
+    const activity = await this.prisma.user_activities.findUnique({
+      where: { id: activityLogId },
+      select: { date: true },
+    });
+
+    if (!activity) {
+      this.logger.warn(`ActivityPointsHandler: activity row not found for activityLogId=${activityLogId}`);
+      return;
+    }
+
+    if (section === 'power' || section === 'craft') {
+      await this.recalculateSectionDayPoints(userId, section, activity.date);
+      return;
+    }
+
+    await this.recalculateSingleLogPoints(userId, activityLogId, section);
+  }
+
+  private async recalculateSectionDayPoints(
+    userId: string,
+    section: string,
+    date: Date,
+  ): Promise<void> {
+    const [logs, setup] = await Promise.all([
+      this.prisma.user_activities.findMany({
+        where: { user_id: userId, section, date },
+        orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          did_user_do: true,
+          hours: true,
+          description: true,
+          date: true,
+        },
+      }),
+      this.prisma.user_setups.findFirst({
+        where: { user_id: userId, section },
+        select: { rest_days: true },
+      }),
+    ]);
+
+    const restDays: string[] = Array.isArray(setup?.rest_days)
+      ? (setup.rest_days as string[])
+      : [];
+
+    const completedLogs = logs.filter((log) => log.did_user_do);
+
+    for (const log of logs) {
+      const rank = log.did_user_do
+        ? completedLogs.findIndex((entry) => entry.id === log.id)
+        : -1;
+
+      const newPoints = calculateActivityPoints({
+        section,
+        didUserDo: log.did_user_do,
+        relapseCount: null,
+        hours: log.hours != null ? Number(log.hours) : null,
+        hasDescription: !!(log.description && log.description.trim()),
+        date: log.date,
+        restDays,
+        completionRank: rank,
+      });
+
+      await this.applyPointsDelta(userId, log.id, section, newPoints);
+    }
+  }
+
+  private async recalculateSingleLogPoints(
+    userId: string,
+    activityLogId: string,
+    section: string,
+  ): Promise<void> {
     const [activity, setup] = await Promise.all([
       this.prisma.user_activities.findUnique({
         where: { id: activityLogId },
@@ -39,36 +110,13 @@ export class ActivityPointsHandler {
       }),
     ]);
 
-    if (!activity) {
-      this.logger.warn(`ActivityPointsHandler: activity row not found for activityLogId=${activityLogId}`);
-      return;
-    }
-
-    let completionRank = 0;
-    if (section === 'power' || section === 'craft') {
-      if (!activity.did_user_do) {
-        completionRank = -1;
-      } else {
-        const completedLogs = await this.prisma.user_activities.findMany({
-          where: {
-            user_id: userId,
-            section,
-            date: activity.date,
-            did_user_do: true,
-          },
-          orderBy: [{ created_at: 'asc' }, { id: 'asc' }],
-          select: { id: true },
-        });
-        const idx = completedLogs.findIndex((log) => log.id === activityLogId);
-        completionRank = idx >= 0 ? idx : completedLogs.length;
-      }
-    }
+    if (!activity) return;
 
     const restDays: string[] = Array.isArray(setup?.rest_days)
       ? (setup.rest_days as string[])
       : [];
 
-    const newPoints = this.calculatePoints({
+    const newPoints = calculateActivityPoints({
       section,
       didUserDo: activity.did_user_do,
       relapseCount: activity.relapse_count,
@@ -76,9 +124,17 @@ export class ActivityPointsHandler {
       hasDescription: !!(activity.description && activity.description.trim()),
       date: activity.date,
       restDays,
-      completionRank,
     });
 
+    await this.applyPointsDelta(userId, activityLogId, section, newPoints);
+  }
+
+  private async applyPointsDelta(
+    userId: string,
+    activityLogId: string,
+    section: string,
+    newPoints: number,
+  ): Promise<void> {
     const aggregate = await this.prisma.points_ledger.aggregate({
       _sum: { points: true },
       where: { reference_id: activityLogId },
@@ -87,13 +143,11 @@ export class ActivityPointsHandler {
     const existingPoints = aggregate._sum.points ?? 0;
     const delta = newPoints - existingPoints;
 
+    if (delta === 0) return;
+
     this.logger.log(
       `Activity points updated: userId=${userId} activityLogId=${activityLogId} oldPoints=${existingPoints} newPoints=${newPoints} delta=${delta}`,
     );
-
-    if (delta === 0) {
-      return;
-    }
 
     await this.prisma.points_ledger.create({
       data: {
@@ -110,64 +164,5 @@ export class ActivityPointsHandler {
       EventNames.POINTS_UPDATED,
       new PointsUpdatedEvent({ userId, section, delta }),
     );
-  }
-
-  private calculatePoints(params: {
-    section: string;
-    didUserDo: boolean | null;
-    relapseCount: number | null;
-    hours: number | null;
-    hasDescription: boolean;
-    date: Date;
-    restDays: string[];
-    completionRank?: number;
-  }): number {
-    const { section, didUserDo, relapseCount, hours, hasDescription, date, restDays, completionRank = 0 } = params;
-
-    const dayName = DAY_NAMES[date.getDay()];
-    const isRestDay = restDays.includes(dayName);
-
-    switch (section) {
-      case 'power': {
-        if (!didUserDo) return 0;
-        if (completionRank >= 2) return 0;
-        if (completionRank === 1) return 5;
-        let pts = 10;
-        if (hasDescription) pts += 2;
-        if (isRestDay) pts += 15;
-        return pts;
-      }
-
-      case 'mind': {
-        if (!didUserDo) return 0;
-        let pts = 10;
-        if (hasDescription) pts += 2;
-        if (isRestDay) pts += 15;
-        return pts;
-      }
-
-      case 'craft': {
-        if (!didUserDo) return 0;
-        if (completionRank >= 2) return 0;
-        if (completionRank === 1) return 5;
-        let pts = 10;
-        if (hours != null && hours > 2) {
-          const extraHours = Math.floor(hours - 2);
-          pts += extraHours * 2;
-        }
-        if (hasDescription) pts += 2;
-        if (isRestDay) pts += 15;
-        return pts;
-      }
-
-      case 'purity': {
-        const count = relapseCount ?? 0;
-        if (count === 0) return 10;
-        return -(20 * count);
-      }
-
-      default:
-        return 0;
-    }
   }
 }

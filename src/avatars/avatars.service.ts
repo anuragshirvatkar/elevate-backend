@@ -1,7 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../prisma/prisma.service';
 import { AvatarSlugs, BEGINNER_AVATAR_SLUGS } from './constants/avatar-slugs';
 import { UserGender } from '../constants/user-gender';
+import {
+  WEEKLY_AVATAR_UNLOCK_RULES,
+  WEEKLY_AVATAR_RULE_BY_SECTION,
+} from './avatar-unlock.rules';
+import { AvatarUnlockedEvent } from '../events/avatar-unlocked.event';
+import { AvatarRevokedEvent } from '../events/avatar-revoked.event';
+import { EventNames } from '../events/event-names';
 
 export interface AvatarActionResult {
   id: string;
@@ -17,6 +25,7 @@ export interface WeeklyAvatarProgress {
   currentWeekDays: number;
   totalWeeks: number;
   requiredDaysPerWeek: number;
+  allRequirementsMet: boolean;
   weeks: {
     week: number;
     days: number;
@@ -32,6 +41,7 @@ export interface PurityAvatarProgress {
   maxRelapsesAllowed: number;
   loggedDays: number;
   requiredLoggedDays: number;
+  allRequirementsMet: boolean;
 }
 
 export interface DefaultAvatarProgress {
@@ -45,7 +55,12 @@ export type AvatarProgress =
 
 @Injectable()
 export class AvatarsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(AvatarsService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private eventEmitter: EventEmitter2,
+  ) {}
 
   async syncBeginnerAvatars(userId: string): Promise<void> {
     await this.ensureBeginnerAvatarsUnlocked(userId, new Date());
@@ -246,7 +261,6 @@ export class AvatarsService {
     if (!existing || !existing.is_unlocked) return null;
 
     const now = new Date();
-    const wasSelected = existing.is_selected;
 
     await this.prisma.user_avatars.update({
       where: {
@@ -271,11 +285,150 @@ export class AvatarsService {
       },
     });
 
-    if (wasSelected) {
-      await this.autoSwitchToDefaultAvatar(userId, now);
-    }
+    await this.ensureDefaultAvatarSelected(userId, now);
 
     return { id: avatar.id, name: avatar.name, slug: avatar.slug };
+  }
+
+  async syncAllAvatarUnlocks(userId: string, date = new Date()): Promise<void> {
+    const today = this.normalizeDate(date);
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { gender: true },
+    });
+
+    for (const rule of WEEKLY_AVATAR_UNLOCK_RULES) {
+      await this.syncWeeklyAvatarUnlock(userId, rule, today);
+    }
+
+    if (user?.gender !== UserGender.FEMALE) {
+      await this.syncKaelUnlock(userId, today);
+    }
+
+    await this.ensureDefaultAvatarSelected(userId, today);
+  }
+
+  async syncAvatarUnlocksForSection(
+    userId: string,
+    section: string,
+    date = new Date(),
+  ): Promise<void> {
+    const today = this.normalizeDate(date);
+
+    if (section === 'purity') {
+      const user = await this.prisma.users.findUnique({
+        where: { id: userId },
+        select: { gender: true },
+      });
+      if (user?.gender !== UserGender.FEMALE) {
+        await this.syncKaelUnlock(userId, today);
+      }
+      return;
+    }
+
+    const rule = WEEKLY_AVATAR_RULE_BY_SECTION[section];
+    if (rule) {
+      await this.syncWeeklyAvatarUnlock(userId, rule, today);
+    }
+  }
+
+  private async syncWeeklyAvatarUnlock(
+    userId: string,
+    rule: {
+      section: string;
+      slug: string;
+      totalWeeks: number;
+      requiredDaysPerWeek: number;
+      lossReason: (count: number) => string;
+    },
+    today: Date,
+  ): Promise<void> {
+    const weekCounts = await this.getRollingWeekDayCounts(
+      userId,
+      rule.section,
+      rule.totalWeeks,
+      today,
+    );
+
+    const allMeetThreshold = weekCounts.every((c) => c >= rule.requiredDaysPerWeek);
+    const pastWeekCounts = weekCounts.slice(0, -1);
+    const failedPastWeek = pastWeekCounts.find((c) => c < rule.requiredDaysPerWeek);
+
+    if (allMeetThreshold) {
+      const result = await this.unlockAvatarBySlug(userId, rule.slug);
+      if (result) {
+        this.logger.log(`Avatar unlocked: userId=${userId} avatar=${result.slug}`);
+        this.eventEmitter.emit(
+          EventNames.AVATAR_UNLOCKED,
+          new AvatarUnlockedEvent({
+            userId,
+            avatarId: result.id,
+            slug: result.slug,
+            name: result.name,
+          }),
+        );
+      }
+      return;
+    }
+
+    if (failedPastWeek !== undefined) {
+      const reason = rule.lossReason(failedPastWeek);
+      const result = await this.revokeAvatarBySlug(userId, rule.slug, reason);
+      if (result) {
+        this.logger.log(
+          `Avatar revoked: userId=${userId} avatar=${result.slug} reason="${reason}"`,
+        );
+        this.eventEmitter.emit(
+          EventNames.AVATAR_REVOKED,
+          new AvatarRevokedEvent({
+            userId,
+            avatarId: result.id,
+            slug: result.slug,
+            name: result.name,
+          }),
+        );
+      }
+    }
+  }
+
+  private async syncKaelUnlock(userId: string, today: Date): Promise<void> {
+    const progress = await this.computeKaelProgress(userId, today);
+
+    if (progress.allRequirementsMet) {
+      const result = await this.unlockAvatarBySlug(userId, AvatarSlugs.KAEL);
+      if (result) {
+        this.logger.log(`Avatar unlocked: userId=${userId} avatar=${result.slug}`);
+        this.eventEmitter.emit(
+          EventNames.AVATAR_UNLOCKED,
+          new AvatarUnlockedEvent({
+            userId,
+            avatarId: result.id,
+            slug: result.slug,
+            name: result.name,
+          }),
+        );
+      }
+      return;
+    }
+
+    const reason =
+      progress.relapsesThisMonth > progress.maxRelapsesAllowed
+        ? 'More than 1 relapse in the last 30 days'
+        : `Only ${progress.loggedDays} of ${progress.requiredLoggedDays} purity days logged`;
+
+    const result = await this.revokeAvatarBySlug(userId, AvatarSlugs.KAEL, reason);
+    if (result) {
+      this.logger.log(`Avatar revoked: userId=${userId} avatar=${result.slug} reason="${reason}"`);
+      this.eventEmitter.emit(
+        EventNames.AVATAR_REVOKED,
+        new AvatarRevokedEvent({
+          userId,
+          avatarId: result.id,
+          slug: result.slug,
+          name: result.name,
+        }),
+      );
+    }
   }
 
   async getAvatarsProgress(
@@ -315,76 +468,74 @@ export class AvatarsService {
     requiredDaysPerWeek: number,
     today: Date,
   ): Promise<WeeklyAvatarProgress> {
-    const currentWeekMonday = this.getWeekMonday(today);
-    const nextMonday = new Date(currentWeekMonday);
-    nextMonday.setUTCDate(nextMonday.getUTCDate() + 7);
+    const weekCounts = await this.getRollingWeekDayCounts(
+      userId,
+      section,
+      totalWeeks,
+      today,
+    );
 
-    const rangeStart = new Date(currentWeekMonday);
-    rangeStart.setUTCDate(rangeStart.getUTCDate() - totalWeeks * 7);
+    const currentWeekDays = weekCounts[weekCounts.length - 1] ?? 0;
+    const allRequirementsMet = weekCounts.every((c) => c >= requiredDaysPerWeek);
 
-    const [currentRows, pastRows] = await Promise.all([
-      this.prisma.user_activities.findMany({
-        where: {
-          user_id: userId,
-          section,
-          did_user_do: true,
-          date: { gte: currentWeekMonday, lt: nextMonday },
-        },
-        distinct: ['date'],
-        select: { date: true },
-      }),
-      this.prisma.user_activities.findMany({
-        where: {
-          user_id: userId,
-          section,
-          did_user_do: true,
-          date: { gte: rangeStart, lt: currentWeekMonday },
-        },
-        distinct: ['date'],
-        select: { date: true },
-      }),
-    ]);
+    const weeks: WeeklyAvatarProgress['weeks'] = weekCounts.map((days, i) => ({
+      week: i + 1,
+      days,
+      required: requiredDaysPerWeek,
+      met: days >= requiredDaysPerWeek,
+      ...(i === weekCounts.length - 1 ? { inProgress: true as const } : {}),
+    }));
 
-    const currentWeekDays = currentRows.length;
-
-    const pastCounts = new Array(totalWeeks).fill(0);
-    for (const { date } of pastRows) {
-      const diffMs = currentWeekMonday.getTime() - new Date(date).getTime();
-      const weekBack = Math.ceil(diffMs / SEVEN_DAYS_MS);
-      if (weekBack >= 1 && weekBack <= totalWeeks) {
-        pastCounts[weekBack - 1]++;
-      }
-    }
-
-    // week 1 = current in-progress, week 2 = last completed, week N+1 = oldest
-    const weeks: WeeklyAvatarProgress['weeks'] = [
-      {
-        week: 1,
-        days: currentWeekDays,
-        required: requiredDaysPerWeek,
-        met: currentWeekDays >= requiredDaysPerWeek,
-        inProgress: true,
-      },
-      ...pastCounts.map((days, i) => ({
-        week: i + 2,
-        days,
-        required: requiredDaysPerWeek,
-        met: days >= requiredDaysPerWeek,
-      })),
-    ];
-
-    const qualifiedPastWeeks = pastCounts.filter(
-      (c) => c >= requiredDaysPerWeek,
-    ).length;
+    const qualifiedWeeks = weekCounts.filter((c) => c >= requiredDaysPerWeek).length;
 
     return {
       type: 'weekly',
-      currentWeek: Math.min(qualifiedPastWeeks + 1, totalWeeks),
+      currentWeek: Math.min(qualifiedWeeks, totalWeeks),
       currentWeekDays,
       totalWeeks,
       requiredDaysPerWeek,
+      allRequirementsMet,
       weeks,
     };
+  }
+
+  /** Mon–Sun day counts: oldest past week first, current week last. */
+  private async getRollingWeekDayCounts(
+    userId: string,
+    section: string,
+    totalWeeks: number,
+    today: Date,
+  ): Promise<number[]> {
+    const currentMonday = this.getWeekMonday(today);
+    const windowStart = new Date(currentMonday);
+    windowStart.setUTCDate(windowStart.getUTCDate() - (totalWeeks - 1) * 7);
+
+    const windowEnd = new Date(currentMonday);
+    windowEnd.setUTCDate(windowEnd.getUTCDate() + 7);
+
+    const rows = await this.prisma.user_activities.findMany({
+      where: {
+        user_id: userId,
+        section,
+        did_user_do: true,
+        date: { gte: windowStart, lt: windowEnd },
+      },
+      distinct: ['date'],
+      select: { date: true },
+    });
+
+    const counts = new Array(totalWeeks).fill(0);
+    for (const { date } of rows) {
+      const weekMonday = this.getWeekMonday(new Date(date));
+      const weekIndex = Math.round(
+        (weekMonday.getTime() - windowStart.getTime()) / SEVEN_DAYS_MS,
+      );
+      if (weekIndex >= 0 && weekIndex < totalWeeks) {
+        counts[weekIndex]++;
+      }
+    }
+
+    return counts;
   }
 
   private async computeKaelProgress(
@@ -416,12 +567,19 @@ export class AvatarsService {
       }),
     ]);
 
+    const relapsesThisMonth = relapseDays.length;
+    const loggedDaysCount = loggedDays.length;
+    const maxRelapsesAllowed = 1;
+    const requiredLoggedDays = 30;
+
     return {
       type: 'purity',
-      relapsesThisMonth: relapseDays.length,
-      maxRelapsesAllowed: 1,
-      loggedDays: loggedDays.length,
-      requiredLoggedDays: 30,
+      relapsesThisMonth,
+      maxRelapsesAllowed,
+      loggedDays: loggedDaysCount,
+      requiredLoggedDays,
+      allRequirementsMet:
+        relapsesThisMonth <= maxRelapsesAllowed && loggedDaysCount >= requiredLoggedDays,
     };
   }
 
@@ -438,6 +596,16 @@ export class AvatarsService {
     const d = new Date(date);
     d.setUTCHours(0, 0, 0, 0);
     return d;
+  }
+
+  private async ensureDefaultAvatarSelected(userId: string, now: Date): Promise<void> {
+    const selected = await this.prisma.user_avatars.findFirst({
+      where: { user_id: userId, is_selected: true },
+    });
+
+    if (selected?.is_unlocked) return;
+
+    await this.autoSwitchToDefaultAvatar(userId, now);
   }
 
   private async autoSwitchToDefaultAvatar(userId: string, now: Date): Promise<void> {
