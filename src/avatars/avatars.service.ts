@@ -7,17 +7,20 @@ import {
   WEEKLY_AVATAR_UNLOCK_RULES,
   WEEKLY_AVATAR_RULE_BY_SECTION,
 } from './avatar-unlock.rules';
+import {
+  getRollingWeekDayCountsFromDates,
+  normalizeUtcDate,
+} from './avatar-week.utils';
 import { AvatarUnlockedEvent } from '../events/avatar-unlocked.event';
 import { AvatarRevokedEvent } from '../events/avatar-revoked.event';
 import { EventNames } from '../events/event-names';
+import { getLocalToday, getLocalWeekMonday } from '../utils/date.utils';
 
 export interface AvatarActionResult {
   id: string;
   name: string;
   slug: string;
 }
-
-const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface WeeklyAvatarProgress {
   type: 'weekly';
@@ -290,15 +293,16 @@ export class AvatarsService {
     return { id: avatar.id, name: avatar.name, slug: avatar.slug };
   }
 
-  async syncAllAvatarUnlocks(userId: string, date = new Date()): Promise<void> {
-    const today = this.normalizeDate(date);
+  async syncAllAvatarUnlocks(userId: string, date?: Date): Promise<void> {
+    const { today, timezone } = await this.resolveUserToday(userId, date);
+
     const user = await this.prisma.users.findUnique({
       where: { id: userId },
       select: { gender: true },
     });
 
     for (const rule of WEEKLY_AVATAR_UNLOCK_RULES) {
-      await this.syncWeeklyAvatarUnlock(userId, rule, today);
+      await this.syncWeeklyAvatarUnlock(userId, rule, timezone);
     }
 
     if (user?.gender !== UserGender.FEMALE) {
@@ -311,9 +315,9 @@ export class AvatarsService {
   async syncAvatarUnlocksForSection(
     userId: string,
     section: string,
-    date = new Date(),
+    date?: Date,
   ): Promise<void> {
-    const today = this.normalizeDate(date);
+    const { today, timezone } = await this.resolveUserToday(userId, date);
 
     if (section === 'purity') {
       const user = await this.prisma.users.findUnique({
@@ -328,7 +332,7 @@ export class AvatarsService {
 
     const rule = WEEKLY_AVATAR_RULE_BY_SECTION[section];
     if (rule) {
-      await this.syncWeeklyAvatarUnlock(userId, rule, today);
+      await this.syncWeeklyAvatarUnlock(userId, rule, timezone);
     }
   }
 
@@ -341,13 +345,13 @@ export class AvatarsService {
       requiredDaysPerWeek: number;
       lossReason: (count: number) => string;
     },
-    today: Date,
+    timezone: string,
   ): Promise<void> {
     const weekCounts = await this.getRollingWeekDayCounts(
       userId,
       rule.section,
       rule.totalWeeks,
-      today,
+      timezone,
     );
 
     const allMeetThreshold = weekCounts.every((c) => c >= rule.requiredDaysPerWeek);
@@ -434,13 +438,15 @@ export class AvatarsService {
   async getAvatarsProgress(
     userId: string,
     gender?: string | null,
+    timezone?: string | null,
   ): Promise<Record<string, AvatarProgress>> {
-    const today = this.normalizeDate(new Date());
+    const tz = timezone ?? 'Asia/Kolkata';
+    const today = getLocalToday(tz);
 
     const [verin, renji, aelius, kael] = await Promise.all([
-      this.computeWeeklyProgress(userId, 'mind', 2, 3, today),
-      this.computeWeeklyProgress(userId, 'craft', 3, 3, today),
-      this.computeWeeklyProgress(userId, 'power', 2, 4, today),
+      this.computeWeeklyProgress(userId, 'mind', 2, 3, tz),
+      this.computeWeeklyProgress(userId, 'craft', 3, 3, tz),
+      this.computeWeeklyProgress(userId, 'power', 2, 4, tz),
       gender === UserGender.FEMALE
         ? Promise.resolve(null)
         : this.computeKaelProgress(userId, today),
@@ -466,13 +472,13 @@ export class AvatarsService {
     section: string,
     totalWeeks: number,
     requiredDaysPerWeek: number,
-    today: Date,
+    timezone: string,
   ): Promise<WeeklyAvatarProgress> {
     const weekCounts = await this.getRollingWeekDayCounts(
       userId,
       section,
       totalWeeks,
-      today,
+      timezone,
     );
 
     const currentWeekDays = weekCounts[weekCounts.length - 1] ?? 0;
@@ -504,9 +510,9 @@ export class AvatarsService {
     userId: string,
     section: string,
     totalWeeks: number,
-    today: Date,
+    timezone: string,
   ): Promise<number[]> {
-    const currentMonday = this.getWeekMonday(today);
+    const currentMonday = getLocalWeekMonday(timezone);
     const windowStart = new Date(currentMonday);
     windowStart.setUTCDate(windowStart.getUTCDate() - (totalWeeks - 1) * 7);
 
@@ -520,22 +526,27 @@ export class AvatarsService {
         did_user_do: true,
         date: { gte: windowStart, lt: windowEnd },
       },
-      distinct: ['date'],
       select: { date: true },
     });
 
-    const counts = new Array(totalWeeks).fill(0);
-    for (const { date } of rows) {
-      const weekMonday = this.getWeekMonday(new Date(date));
-      const weekIndex = Math.round(
-        (weekMonday.getTime() - windowStart.getTime()) / SEVEN_DAYS_MS,
-      );
-      if (weekIndex >= 0 && weekIndex < totalWeeks) {
-        counts[weekIndex]++;
-      }
-    }
+    return getRollingWeekDayCountsFromDates(
+      rows.map((row) => row.date),
+      currentMonday,
+      totalWeeks,
+    );
+  }
 
-    return counts;
+  private async resolveUserToday(
+    userId: string,
+    date?: Date,
+  ): Promise<{ today: Date; timezone: string }> {
+    const user = await this.prisma.users.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    });
+    const timezone = user?.timezone ?? 'Asia/Kolkata';
+    const today = date ? normalizeUtcDate(date) : getLocalToday(timezone);
+    return { today, timezone };
   }
 
   private async computeKaelProgress(
@@ -583,19 +594,8 @@ export class AvatarsService {
     };
   }
 
-  private getWeekMonday(date: Date): Date {
-    const d = new Date(date);
-    const day = d.getUTCDay();
-    const offset = day === 0 ? -6 : 1 - day;
-    d.setUTCDate(d.getUTCDate() + offset);
-    d.setUTCHours(0, 0, 0, 0);
-    return d;
-  }
-
   private normalizeDate(date: Date): Date {
-    const d = new Date(date);
-    d.setUTCHours(0, 0, 0, 0);
-    return d;
+    return normalizeUtcDate(date);
   }
 
   private async ensureDefaultAvatarSelected(userId: string, now: Date): Promise<void> {

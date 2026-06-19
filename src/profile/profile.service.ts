@@ -43,6 +43,7 @@ export class ProfileService {
           username: true,
           date_of_birth: true,
           gender: true,
+          timezone: true,
           onboarding_completed: true,
           last_seen_at: true,
           created_at: true,
@@ -104,7 +105,11 @@ export class ProfileService {
 
     if (!user) throw new NotFoundException('User not found');
 
-    const avatarProgress = await this.avatarsService.getAvatarsProgress(userId, user.gender);
+    const avatarProgress = await this.avatarsService.getAvatarsProgress(
+      userId,
+      user.gender,
+      user.timezone,
+    );
 
     const showPurity = shouldShowPurityAnalytics(user.gender);
 
