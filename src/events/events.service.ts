@@ -7,7 +7,7 @@ import { EventNames } from './event-names';
 export class EventsService {
   constructor(private eventEmitter: EventEmitter2) {}
 
-  emitActivityLogged(payload: ActivityLoggedEvent): void {
-    this.eventEmitter.emit(EventNames.ACTIVITY_LOGGED, payload);
+  async emitActivityLogged(payload: ActivityLoggedEvent): Promise<void> {
+    await this.eventEmitter.emitAsync(EventNames.ACTIVITY_LOGGED, payload);
   }
 }

@@ -268,7 +268,7 @@ export class ActivitiesService {
       where: { reference_id: record.id },
     });
 
-    this.eventsService.emitActivityLogged(event);
+    await this.eventsService.emitActivityLogged(event);
 
     this.logger.log(
       `Activity log upserted: userId=${userId} activityLogId=${record.id} date=${dto.date} operation=${operation}`,
