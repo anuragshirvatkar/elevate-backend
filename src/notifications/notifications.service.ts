@@ -32,22 +32,31 @@ export class NotificationsService {
     deviceId?: string,
     platform?: string,
   ): Promise<void> {
-    await this.prisma.user_notification_devices.upsert({
-      where: { expo_push_token: expoPushToken },
-      create: {
-        user_id: userId,
-        expo_push_token: expoPushToken,
-        device_id: deviceId ?? null,
-        platform: platform ?? null,
-        is_active: true,
-      },
-      update: {
-        user_id: userId,
-        device_id: deviceId ?? null,
-        platform: platform ?? null,
-        is_active: true,
-      },
-    });
+    await this.prisma.$transaction([
+      this.prisma.user_notification_devices.updateMany({
+        where: {
+          user_id: userId,
+          expo_push_token: { not: expoPushToken },
+        },
+        data: { is_active: false },
+      }),
+      this.prisma.user_notification_devices.upsert({
+        where: { expo_push_token: expoPushToken },
+        create: {
+          user_id: userId,
+          expo_push_token: expoPushToken,
+          device_id: deviceId ?? null,
+          platform: platform ?? null,
+          is_active: true,
+        },
+        update: {
+          user_id: userId,
+          device_id: deviceId ?? null,
+          platform: platform ?? null,
+          is_active: true,
+        },
+      }),
+    ]);
   }
 
   async sendNotification(
@@ -111,41 +120,67 @@ export class NotificationsService {
     this.logger.log(`[SEND] userId=${userId} type=${type} title="${fullTitle}" — sending to ${messages.length} token(s): ${messages.map(m => m.to).join(', ')}`);
 
 
-    try {
-      const chunks = this.expo.chunkPushNotifications(messages);
-      for (const chunk of chunks) {
-        const tickets = await this.expo.sendPushNotificationsAsync(chunk);
-        for (let i = 0; i < tickets.length; i++) {
-          const ticket = tickets[i];
-          this.logger.log(`[SEND] ticket[${i}] status=${ticket.status}${(ticket as any).id ? ` id=${(ticket as any).id}` : ''}${(ticket as any).message ? ` message=${(ticket as any).message}` : ''}${(ticket as any).details ? ` details=${JSON.stringify((ticket as any).details)}` : ''}`);
-          if (
-            ticket.status === 'error' &&
-            (ticket as { details?: { error?: string } }).details?.error === 'DeviceNotRegistered'
-          ) {
-            const token = messages[i].to as string;
-            await this.prisma.user_notification_devices
-              .update({
-                where: { expo_push_token: token },
-                data: { is_active: false },
-              })
-              .catch(() => void 0);
-          }
+    let sentCount = 0;
+    let failedCount = 0;
+
+    for (const message of messages) {
+      const token = message.to as string;
+      try {
+        const [ticket] = await this.expo.sendPushNotificationsAsync([message]);
+        this.logger.log(
+          `[SEND] token=${token.slice(0, 20)}... status=${ticket.status}` +
+            `${(ticket as { id?: string }).id ? ` id=${(ticket as { id?: string }).id}` : ''}` +
+            `${(ticket as { message?: string }).message ? ` message=${(ticket as { message?: string }).message}` : ''}` +
+            `${(ticket as { details?: unknown }).details ? ` details=${JSON.stringify((ticket as { details?: unknown }).details)}` : ''}`,
+        );
+
+        if (ticket.status === 'ok') {
+          sentCount += 1;
+          continue;
         }
+
+        failedCount += 1;
+        const errorCode = (ticket as { details?: { error?: string } }).details?.error;
+        if (errorCode === 'DeviceNotRegistered' || errorCode === 'InvalidCredentials') {
+          await this.deactivatePushToken(token);
+        }
+      } catch (err) {
+        failedCount += 1;
+        this.logger.warn(
+          `[SEND] token=${token.slice(0, 20)}... failed: ${String(err)}`,
+        );
+        await this.deactivatePushToken(token).catch(() => void 0);
       }
+    }
 
-      await this.prisma.notification_jobs.update({
-        where: { id: job.id },
-        data: { status: NOTIFICATION_JOB_STATUS.SENT, sent_at: new Date() },
-      });
-
-      this.logger.log(`Notification sent: userId=${userId} type=${type}`);
-    } catch (err) {
+    if (sentCount === 0) {
       await this.prisma.notification_jobs.update({
         where: { id: job.id },
         data: { status: NOTIFICATION_JOB_STATUS.FAILED },
       });
-      this.logger.error(`Notification failed: userId=${userId} type=${type} error=${String(err)}`);
+      this.logger.error(
+        `Notification failed: userId=${userId} type=${type} — 0/${messages.length} token(s) delivered`,
+      );
+      return;
     }
+
+    await this.prisma.notification_jobs.update({
+      where: { id: job.id },
+      data: { status: NOTIFICATION_JOB_STATUS.SENT, sent_at: new Date() },
+    });
+
+    this.logger.log(
+      `Notification sent: userId=${userId} type=${type} delivered=${sentCount} failed=${failedCount}`,
+    );
+  }
+
+  private async deactivatePushToken(token: string): Promise<void> {
+    await this.prisma.user_notification_devices
+      .update({
+        where: { expo_push_token: token },
+        data: { is_active: false },
+      })
+      .catch(() => void 0);
   }
 
   getCooldownKey(userId: string, type: string, section?: string): string {
