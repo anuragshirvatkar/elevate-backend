@@ -125,9 +125,6 @@ export class ActivitiesService {
       if (mindSetup?.is_active === false) {
         throw new BadRequestException('Mind section is currently inactive. Activate it in Mind setup before logging.');
       }
-      if (dto.didUserDo === true && !dto.title?.trim()) {
-        throw new BadRequestException('title is required for section "mind".');
-      }
     }
 
     if (dto.section === 'purity') {
@@ -226,6 +223,9 @@ export class ActivitiesService {
       }
     } else {
       operation = 'create';
+      if (dto.section === 'mind' && dto.didUserDo === true && !dto.title?.trim()) {
+        throw new BadRequestException('title is required for section "mind".');
+      }
       record = await this.prisma.user_activities.create({
         data: {
           user_id: userId,

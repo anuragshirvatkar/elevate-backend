@@ -75,6 +75,21 @@ export class BooksController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Delete('records/:recordId')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Delete a single reading record',
+    description: 'Deletes one mind reading record (and its points/images). Used to remove records logged under the wrong book.',
+  })
+  @ApiOkResponse({ description: 'Record deleted successfully' })
+  @ApiBadRequestResponse({ description: 'Record not found or invalid ownership' })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  deleteBookRecord(@CurrentUser() user: { userId: string }, @Param('recordId') recordId: string) {
+    return this.booksService.deleteBookRecord(user.userId, recordId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Delete('custom/:bookId')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()

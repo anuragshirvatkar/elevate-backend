@@ -172,6 +172,35 @@ export class BooksService {
     };
   }
 
+  async deleteBookRecord(userId: string, recordId: string): Promise<{ success: boolean; message: string }> {
+    const record = await this.prisma.user_activities.findUnique({
+      where: { id: recordId },
+      select: { id: true, user_id: true, section: true },
+    });
+
+    if (!record) {
+      throw new NotFoundException('Record not found');
+    }
+
+    if (record.user_id !== userId) {
+      throw new BadRequestException('Invalid record ownership');
+    }
+
+    if (record.section !== 'mind') {
+      throw new BadRequestException('Only mind reading records can be deleted here.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.activity_images.deleteMany({ where: { activity_log_id: recordId } }),
+      this.prisma.points_ledger.deleteMany({ where: { user_id: userId, reference_id: recordId } }),
+      this.prisma.user_activities.delete({ where: { id: recordId } }),
+    ]);
+
+    this.logger.log(`Book record deleted: userId=${userId} recordId=${recordId}`);
+
+    return { success: true, message: 'Record deleted successfully' };
+  }
+
   async deleteCustomBook(userId: string, bookId: string): Promise<{ success: boolean; message: string }> {
     const book = await this.prisma.user_books.findUnique({
       where: { id: bookId },

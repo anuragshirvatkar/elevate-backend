@@ -41,14 +41,14 @@ interface PointsAggregate {
 export class LeaderboardService {
   constructor(private prisma: PrismaService) {}
 
-  /** Competition ranking: tied points share the same rank; next rank skips (1,1,3). */
+  /** Dense ranking: tied points share the same rank; next distinct points is the next rank (1,1,2). */
   private buildRankMap(entries: PointsAggregate[]): Map<string, number> {
     const rankMap = new Map<string, number>();
-    let rank = 1;
+    let rank = 0;
 
     for (let i = 0; i < entries.length; i++) {
-      if (i > 0 && entries[i].points < entries[i - 1].points) {
-        rank = i + 1;
+      if (i === 0 || entries[i].points < entries[i - 1].points) {
+        rank += 1;
       }
       rankMap.set(entries[i].user_id, rank);
     }
@@ -106,13 +106,15 @@ export class LeaderboardService {
     };
   }
 
-  private competitionRankForPoints(sorted: PointsAggregate[], userId: string, points: number): number {
+  private denseRankForPoints(sorted: PointsAggregate[], userId: string, points: number): number {
     const rankMap = this.buildRankMap(sorted);
     const fromMap = rankMap.get(userId);
     if (fromMap !== undefined) return fromMap;
 
-    const usersAhead = sorted.filter((entry) => entry.points > points).length;
-    return usersAhead + 1;
+    const distinctPointsAhead = new Set(
+      sorted.filter((entry) => entry.points > points).map((entry) => entry.points),
+    ).size;
+    return distinctPointsAhead + 1;
   }
 
   async getLeaderboard(
@@ -164,7 +166,7 @@ export class LeaderboardService {
       return {
         rankings: rankingItems,
         currentUser: {
-          rank: this.competitionRankForPoints(sorted, currentUserId, myPoints),
+          rank: this.denseRankForPoints(sorted, currentUserId, myPoints),
           points: myPoints,
         },
         dateRange,
@@ -199,10 +201,10 @@ export class LeaderboardService {
     return {
       rankings: rankingItems,
       currentUser: {
-        rank: this.competitionRankForPoints(sorted, currentUserId, myPoints),
-        points: myPoints,
-      },
-      dateRange,
-    };
-  }
+      rank: this.denseRankForPoints(sorted, currentUserId, myPoints),
+      points: myPoints,
+    },
+    dateRange,
+  };
+}
 }

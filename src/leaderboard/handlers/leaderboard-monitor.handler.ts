@@ -95,10 +95,11 @@ export class LeaderboardMonitorHandler {
       .map((g) => ({ user_id: g.user_id, points: g._sum.points ?? 0 }))
       .sort((a, b) => b.points - a.points);
 
-    let rank = 1;
+    // Dense ranking (1,1,2): tied points share a rank, next distinct points is the next rank.
+    let rank = 0;
     return sorted.slice(0, 3).map((entry, i) => {
-      if (i > 0 && entry.points < sorted[i - 1].points) {
-        rank = i + 1;
+      if (i === 0 || entry.points < sorted[i - 1].points) {
+        rank += 1;
       }
       return { userId: entry.user_id, rank };
     });
