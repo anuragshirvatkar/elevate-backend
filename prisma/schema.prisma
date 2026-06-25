@@ -296,6 +296,7 @@ model user_activities {
 
   relapse_count    Int?
 
+  title            String?   @db.Text
   description      String?   @db.Text
   reason_if_no     String?   @db.Text
 

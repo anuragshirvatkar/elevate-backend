@@ -9,6 +9,7 @@ import { BookResponseDto } from './dto/book-response.dto';
 import { EditSummaryDto } from '../setup/dto/mind-setup.dto';
 import { BookSummaryViewDto } from './dto/book-summary-view.dto';
 import { BookSummaryResponseDto } from './dto/book-summary-response.dto';
+import { BookWithRecordsDto, BookRecordsResponseDto } from './dto/book-records.dto';
 
 @ApiTags('Books')
 @Controller('books')
@@ -45,6 +46,32 @@ export class BooksController {
   @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
   getCustomBooks(@CurrentUser() user: { userId: string }) {
     return this.booksService.getCustomBooks(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('with-records')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get books that have reading records',
+    description: 'Returns books for which the user has written at least one mind reflection, for the Book Records screen.',
+  })
+  @ApiOkResponse({ type: [BookWithRecordsDto] })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  getBooksWithRecords(@CurrentUser() user: { userId: string }) {
+    return this.booksService.getBooksWithRecords(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get(':bookId/records')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Get all reading records for a book',
+    description: 'Returns the user\'s day-by-day reflections (title + description + date) for a single book.',
+  })
+  @ApiOkResponse({ type: BookRecordsResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
+  getBookRecords(@CurrentUser() user: { userId: string }, @Param('bookId') bookId: string) {
+    return this.booksService.getBookRecords(user.userId, bookId);
   }
 
   @UseGuards(JwtAuthGuard)

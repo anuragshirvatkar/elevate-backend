@@ -279,6 +279,49 @@ export class NotificationsScheduler implements OnModuleInit {
         continue;
       }
 
+      const restDays: string[] = Array.isArray(setup.rest_days) ? (setup.rest_days as string[]) : [];
+      const todayDayName = DAY_NAMES[userToday.getUTCDay()];
+      const isRestDay = restDays.includes(todayDayName);
+
+      // Rest day: send only ONE consolidated rest-day notification per user per
+      // local day, even when multiple pillars rest on the same day.
+      if (isRestDay) {
+        const localDateStr = getLocalDateString(userTz);
+        const restCooldown = await this.notificationsService.getCooldownData(
+          setup.user_id,
+          NotificationTypes.REST_DAY,
+          localDateStr,
+        );
+        if (restCooldown) {
+          this.logger.log(
+            `[CRON] SKIP rest-day reminder (already sent today) userId=${setup.user_id} section=${setup.section}`,
+          );
+          continue;
+        }
+
+        const { title, body } = this.buildRestDayMessage();
+        this.logger.log(
+          `[CRON] SENDING rest-day reminder to userId=${setup.user_id} (triggered by section=${setup.section}) title="${title}"`,
+        );
+
+        await this.notificationsService.sendNotification(
+          setup.user_id,
+          NotificationTypes.ACTIVITY_REMINDER,
+          title,
+          body,
+          { restDay: true },
+        );
+
+        await this.notificationsService.setCooldown(
+          setup.user_id,
+          NotificationTypes.REST_DAY,
+          localDateStr,
+          COOLDOWN_TTL[NotificationTypes.REST_DAY],
+          { lastSent: new Date().toISOString() },
+        );
+        continue;
+      }
+
       let activityName: string | null = null;
       if (setup.section !== 'mind') {
         const primary = await this.prisma.user_setup_activities.findFirst({
@@ -288,21 +331,9 @@ export class NotificationsScheduler implements OnModuleInit {
         activityName = primary?.activity?.name ?? null;
       }
 
-      const restDays: string[] = Array.isArray(setup.rest_days) ? (setup.rest_days as string[]) : [];
-      const DAY_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const;
-      const todayDayName = DAY_NAMES[new Date().getDay()];
-      const isRestDay = restDays.includes(todayDayName);
+      const { title, body } = this.buildActivityReminderMessage(setup.section, activityName);
 
-      let title: string;
-      let body: string;
-
-      if (isRestDay) {
-        ({ title, body } = this.buildRestDayMessage(setup.section));
-      } else {
-        ({ title, body } = this.buildActivityReminderMessage(setup.section, activityName));
-      }
-
-      this.logger.log(`[CRON] SENDING reminder to userId=${setup.user_id} section=${setup.section} activity="${activityName}" isRestDay=${isRestDay} title="${title}"`);
+      this.logger.log(`[CRON] SENDING reminder to userId=${setup.user_id} section=${setup.section} activity="${activityName}" title="${title}"`);
 
       await this.notificationsService.sendNotification(
         setup.user_id,
@@ -627,38 +658,14 @@ export class NotificationsScheduler implements OnModuleInit {
     return new Map(users.map(u => [u.id, u.timezone]));
   }
 
-  private buildRestDayMessage(section: string): { title: string; body: string } {
-    if (section === 'power') {
-      const variants = [
-        { title: 'Rest Day 💪', body: 'Take a break champ. Your muscles grow on days like these.' },
-        { title: 'Cool Down', body: "It's your rest day. Let your body recover and come back stronger." },
-        { title: 'Rest Up', body: 'No training today. Rest is part of the grind.' },
-        { title: 'Recovery Day', body: 'Chill out champ. Rest days are where the gains happen.' },
-      ];
-      return variants[Math.floor(Math.random() * variants.length)];
-    }
-
-    if (section === 'craft') {
-      const variants = [
-        { title: 'Rest Day 🛠️', body: 'Step away from the screen today. Rest sharpens the mind.' },
-        { title: 'Recharge', body: "It's a rest day. Let your creativity breathe." },
-        { title: 'Take a Break', body: 'No session today. A rested mind builds better tomorrow.' },
-        { title: 'Cool Down', body: 'Rest day — disconnect and recharge. You earned it.' },
-      ];
-      return variants[Math.floor(Math.random() * variants.length)];
-    }
-
-    if (section === 'mind') {
-      const variants = [
-        { title: 'Rest Day 📖', body: "It's a rest day. Let your mind wander freely today." },
-        { title: 'Cool Down', body: 'No reading today. Rest is fuel for a sharper mind.' },
-        { title: 'Take It Easy', body: 'Rest day champ. Your mind deserves a break too.' },
-        { title: 'Mind Reset', body: 'Step back today. Rest days make the lessons stick.' },
-      ];
-      return variants[Math.floor(Math.random() * variants.length)];
-    }
-
-    return { title: 'Rest Day', body: 'Take it easy today. Rest is part of the process.' };
+  private buildRestDayMessage(): { title: string; body: string } {
+    const variants = [
+      { title: 'Rest Day 🌿', body: 'Take the day to recover. Rest is where the growth happens.' },
+      { title: 'Recharge Day', body: 'No sessions today. Rest up and come back stronger.' },
+      { title: 'Take It Easy', body: "It's your rest day. Let your body and mind recover." },
+      { title: 'Cool Down', body: 'Step back today — rest is part of the process.' },
+    ];
+    return variants[Math.floor(Math.random() * variants.length)];
   }
 
   private buildActivityReminderMessage(

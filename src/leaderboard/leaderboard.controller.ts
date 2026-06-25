@@ -29,6 +29,11 @@ export class LeaderboardController {
           { rank: 2, userId: 'uuid', name: 'Rahul', avatar: 'riven', points: 310 },
         ],
         currentUser: { rank: 7, points: 180 },
+        dateRange: {
+          period: 'weekly',
+          start: '2026-06-18T06:19:00.000Z',
+          end: '2026-06-25T06:19:00.000Z',
+        },
       },
     },
   })

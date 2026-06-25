@@ -7,6 +7,7 @@ export const NotificationTypes = {
   PURITY_STREAK_AT_RISK: 'purity_streak_at_risk',
 
   ACTIVITY_REMINDER: 'activity_reminder',
+  REST_DAY: 'rest_day',
 
   LEADERBOARD_ENTERED_TOP3: 'leaderboard_entered_top3',
   LEADERBOARD_RANK_UP: 'leaderboard_rank_up',
@@ -40,6 +41,7 @@ export const COOLDOWN_TTL: Record<string, number> = {
   [NotificationTypes.CRAFT_STREAK_AT_RISK]: 72000,
   [NotificationTypes.MIND_STREAK_AT_RISK]: 72000,
   [NotificationTypes.ACTIVITY_REMINDER]: 72000,
+  [NotificationTypes.REST_DAY]: 86400,
   [NotificationTypes.LEADERBOARD_ENTERED_TOP3]: 21600,
   [NotificationTypes.LEADERBOARD_RANK_UP]: 21600,
   [NotificationTypes.NEAR_UNLOCK_AVATAR]: 86400 * 7,

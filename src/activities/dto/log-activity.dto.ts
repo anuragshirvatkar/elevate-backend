@@ -44,6 +44,14 @@ export class LogActivityDto {
   relapseCount?: number;
 
   @ApiPropertyOptional({
+    example: 'Chapter 3 — Compounding habits',
+    description: 'Title for the entry. Required for the mind section when didUserDo is true.',
+  })
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional({
     example: 'Leg day felt easier today',
     description: 'Free-text description or reflection for the session.',
   })

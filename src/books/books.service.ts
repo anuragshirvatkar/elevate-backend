@@ -8,6 +8,7 @@ import { CreateCustomBookDto } from './dto/create-custom-book.dto';
 import { BookResponseDto } from './dto/book-response.dto';
 import { BookSummaryResponseDto } from './dto/book-summary-response.dto';
 import { BookSummaryViewDto } from './dto/book-summary-view.dto';
+import { BookWithRecordsDto, BookRecordsResponseDto } from './dto/book-records.dto';
 import { EditSummaryDto } from '../setup/dto/mind-setup.dto';
 import { generateBookSummaryPdf, buildSummaryPdfFilename } from './book-summary-pdf';
 
@@ -86,6 +87,91 @@ export class BooksService {
     }));
   }
 
+  async getBooksWithRecords(userId: string): Promise<BookWithRecordsDto[]> {
+    const grouped = await this.prisma.user_activities.groupBy({
+      by: ['user_book_id'],
+      where: {
+        user_id: userId,
+        section: 'mind',
+        user_book_id: { not: null },
+        description: { not: null },
+      },
+      _count: { _all: true },
+      _max: { date: true },
+    });
+
+    if (grouped.length === 0) return [];
+
+    const bookIds = grouped
+      .map((g) => g.user_book_id)
+      .filter((id): id is string => id !== null);
+
+    const books = await this.prisma.user_books.findMany({
+      where: { id: { in: bookIds }, user_id: userId },
+      select: {
+        id: true,
+        title: true,
+        is_completed: true,
+        books_catalog: { select: { author: true } },
+      },
+    });
+
+    const bookById = new Map(books.map((b) => [b.id, b]));
+
+    return grouped
+      .map((g) => {
+        const book = g.user_book_id ? bookById.get(g.user_book_id) : undefined;
+        if (!book) return null;
+        return {
+          userBookId: book.id,
+          title: book.title,
+          author: book.books_catalog?.author ?? null,
+          recordCount: g._count._all,
+          lastEntryDate: g._max.date ? g._max.date.toISOString().slice(0, 10) : null,
+          isCompleted: book.is_completed ?? false,
+        };
+      })
+      .filter((b): b is BookWithRecordsDto => b !== null)
+      .sort((a, b) => (b.lastEntryDate ?? '').localeCompare(a.lastEntryDate ?? ''));
+  }
+
+  async getBookRecords(userId: string, bookId: string): Promise<BookRecordsResponseDto> {
+    const book = await this.prisma.user_books.findUnique({
+      where: { id: bookId },
+      select: { user_id: true, title: true },
+    });
+
+    if (!book) {
+      throw new NotFoundException('Book not found');
+    }
+
+    if (book.user_id !== userId) {
+      throw new BadRequestException('Invalid book ownership');
+    }
+
+    const records = await this.prisma.user_activities.findMany({
+      where: {
+        user_id: userId,
+        section: 'mind',
+        user_book_id: bookId,
+        description: { not: null },
+      },
+      select: { id: true, date: true, title: true, description: true },
+      orderBy: { date: 'asc' },
+    });
+
+    return {
+      bookId,
+      bookTitle: book.title,
+      records: records.map((r) => ({
+        id: r.id,
+        date: r.date.toISOString().slice(0, 10),
+        title: r.title ?? null,
+        description: r.description ?? '',
+      })),
+    };
+  }
+
   async deleteCustomBook(userId: string, bookId: string): Promise<{ success: boolean; message: string }> {
     const book = await this.prisma.user_books.findUnique({
       where: { id: bookId },
@@ -141,7 +227,7 @@ export class BooksService {
         user_book_id: bookId,
         description: { not: null },
       },
-      select: { date: true, description: true },
+      select: { date: true, title: true, description: true },
       orderBy: { date: 'asc' },
     });
 
@@ -163,7 +249,11 @@ export class BooksService {
     }
 
     const reflections = activities
-      .map((a) => `Day ${a.date.toISOString().slice(0, 10)}:\n"${a.description}"`)
+      .map((a) => {
+        const day = a.date.toISOString().slice(0, 10);
+        const heading = a.title?.trim() ? a.title.trim() : `Reflection (${day})`;
+        return `### ${heading} — ${day}\n"${a.description}"`;
+      })
       .join('\n\n');
 
     const { maxTokens, lengthGuide } = this.computeSummaryScale(
@@ -173,12 +263,16 @@ export class BooksService {
 
     const prompt = `Book: ${book.title}
 
-User reflections (${activities.length} entries, ${combinedContent.length} characters total):
+User reflections (${activities.length} entries, ${combinedContent.length} characters total).
+Each reflection has a user-written title that names the topic/section it is about:
 ${reflections}
 
 Create a personal summary of what this user learned while reading this book.
-Do not generate a generic internet summary.
-Only summarize the user's actual reflections and learning.
+Organize the summary SECTION-WISE: group the writing under clear section headings derived from the
+reflection titles above (merge reflections that share the same or closely related title into one section).
+Under each heading, summarize only what the user actually wrote for that topic.
+Do not generate a generic internet summary. Do not invent sections the user did not write about.
+Keep the section headings on their own lines so they are easy to read.
 
 Length: ${lengthGuide}`;
 

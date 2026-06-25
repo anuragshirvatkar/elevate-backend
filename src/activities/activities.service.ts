@@ -125,6 +125,9 @@ export class ActivitiesService {
       if (mindSetup?.is_active === false) {
         throw new BadRequestException('Mind section is currently inactive. Activate it in Mind setup before logging.');
       }
+      if (dto.didUserDo === true && !dto.title?.trim()) {
+        throw new BadRequestException('title is required for section "mind".');
+      }
     }
 
     if (dto.section === 'purity') {
@@ -206,6 +209,7 @@ export class ActivitiesService {
       if (dto.didUserDo === false) updateData.hours = null;
       else if (dto.hours !== undefined) updateData.hours = dto.hours;
       if (dto.relapseCount !== undefined) updateData.relapse_count = dto.relapseCount;
+      if (dto.title !== undefined) updateData.title = dto.title;
       if (dto.description !== undefined) updateData.description = dto.description;
       if (dto.reasonIfNo !== undefined) updateData.reason_if_no = dto.reasonIfNo;
 
@@ -231,6 +235,7 @@ export class ActivitiesService {
           did_user_do: dto.section !== 'purity' ? (dto.didUserDo ?? false) : null,
           hours: dto.hours ?? null,
           relapse_count: dto.relapseCount ?? null,
+          title: dto.title ?? null,
           description: dto.description ?? null,
           reason_if_no: dto.reasonIfNo ?? null,
           date: activityDate,
@@ -352,6 +357,7 @@ export class ActivitiesService {
       did_user_do: boolean | null;
       hours: unknown;
       relapse_count: number | null;
+      title: string | null;
       description: string | null;
       reason_if_no: string | null;
       date: Date;
@@ -371,6 +377,7 @@ export class ActivitiesService {
       didUserDo: log.did_user_do ?? undefined,
       hours: log.hours != null ? Number(log.hours) : undefined,
       relapseCount: log.relapse_count ?? undefined,
+      title: log.title ?? undefined,
       description: log.description ?? undefined,
       reasonIfNo: log.reason_if_no ?? undefined,
       images: log.activity_images.map((img) => img.image_url),

@@ -89,10 +89,18 @@ export class LeaderboardMonitorHandler {
       by: ['user_id'],
       where: { ...sectionWhere, created_at: { gte: weekStart } },
       _sum: { points: true },
-      orderBy: { _sum: { points: 'desc' } },
-      take: 3,
     });
 
-    return groups.map((g, i) => ({ userId: g.user_id, rank: i + 1 }));
+    const sorted = groups
+      .map((g) => ({ user_id: g.user_id, points: g._sum.points ?? 0 }))
+      .sort((a, b) => b.points - a.points);
+
+    let rank = 1;
+    return sorted.slice(0, 3).map((entry, i) => {
+      if (i > 0 && entry.points < sorted[i - 1].points) {
+        rank = i + 1;
+      }
+      return { userId: entry.user_id, rank };
+    });
   }
 }

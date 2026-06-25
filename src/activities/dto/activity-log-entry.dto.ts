@@ -28,6 +28,9 @@ export class ActivityLogEntryDto {
   @ApiPropertyOptional({ example: 0 })
   relapseCount?: number;
 
+  @ApiPropertyOptional({ example: 'Chapter 3 — Compounding habits' })
+  title?: string;
+
   @ApiPropertyOptional({ example: 'Leg day felt easier today' })
   description?: string;
 
