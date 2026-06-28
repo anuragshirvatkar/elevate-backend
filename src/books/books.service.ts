@@ -292,16 +292,25 @@ export class BooksService {
 
     const prompt = `Book: ${book.title}
 
-User reflections (${activities.length} entries, ${combinedContent.length} characters total).
-Each reflection has a user-written title that names the topic/section it is about:
+Below are a reader's own reflections (${activities.length} entries, ${combinedContent.length} characters total).
+Each reflection has a title that names the topic/section it is about:
 ${reflections}
 
-Create a personal summary of what this user learned while reading this book.
-Organize the summary SECTION-WISE: group the writing under clear section headings derived from the
-reflection titles above (merge reflections that share the same or closely related title into one section).
-Under each heading, summarize only what the user actually wrote for that topic.
-Do not generate a generic internet summary. Do not invent sections the user did not write about.
-Keep the section headings on their own lines so they are easy to read.
+Write a flowing summary of this book based ONLY on the content of these reflections.
+
+VOICE (very important):
+- Write it as if it were a passage FROM the book itself — a smooth, third-person narrative that
+  retells the story and ideas directly to the reader.
+- NEVER refer to "the user", "the reader", "they wrote", "they say", "the writer notes", or any
+  similar meta-commentary about who wrote the reflections. Just tell the content directly.
+- Read like a book, not like a report about someone's notes.
+
+STRUCTURE:
+- Organize SECTION-WISE: group the writing under clear section headings derived from the
+  reflection titles above (merge reflections sharing the same or closely related title into one section).
+- Begin each section with a Markdown heading line: "## Section Title".
+- Under each heading, cover only what the reflections actually contain for that topic.
+- Do not generate a generic internet summary and do not invent sections not present in the reflections.
 
 Length: ${lengthGuide}`;
 
@@ -537,7 +546,7 @@ Length: ${lengthGuide}`;
       return {
         maxTokens: 2500,
         lengthGuide:
-          'Write a comprehensive personal reading summary in 8-12 paragraphs. Cover every major theme, insight, and lesson from the reflections. Include specific examples the user mentioned. Do not omit or merge distinct reflections.',
+          'Write a rich, book-length narrative covering every major theme and idea present in the reflections, with the specific moments and examples woven in. Do not omit distinct topics.',
       };
     }
 
@@ -545,7 +554,7 @@ Length: ${lengthGuide}`;
       return {
         maxTokens: 1800,
         lengthGuide:
-          'Write a thorough personal summary in 6-8 paragraphs. Cover all major themes and key learnings with enough depth to reflect what the user shared.',
+          'Write a thorough narrative covering all major themes with enough depth to reflect the content of the reflections.',
       };
     }
 
@@ -553,7 +562,7 @@ Length: ${lengthGuide}`;
       return {
         maxTokens: 1200,
         lengthGuide:
-          'Write a detailed personal summary in 4-6 paragraphs covering the main themes and learnings from the reflections.',
+          'Write a detailed narrative covering the main themes present in the reflections.',
       };
     }
 
@@ -561,13 +570,13 @@ Length: ${lengthGuide}`;
       return {
         maxTokens: 750,
         lengthGuide:
-          'Write a solid personal summary in 2-4 paragraphs covering the core learnings from the reflections.',
+          'Write a solid narrative covering the core ideas present in the reflections.',
       };
     }
 
     return {
       maxTokens: 450,
-      lengthGuide: 'Write a concise personal summary in 1-2 paragraphs.',
+      lengthGuide: 'Write a concise narrative covering the core ideas present in the reflections.',
     };
   }
 }

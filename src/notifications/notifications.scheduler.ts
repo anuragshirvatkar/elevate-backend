@@ -265,17 +265,20 @@ export class NotificationsScheduler implements OnModuleInit {
       const userTomorrow = new Date(userToday);
       userTomorrow.setUTCDate(userToday.getUTCDate() + 1);
 
+      // Suppress the reminder if the user has already addressed this section
+      // today — whether they did it (did_user_do=true) OR explicitly marked it
+      // as not done (did_user_do=false). Either way they've made their decision,
+      // so there's no need to nudge them again.
       const alreadyLogged = await this.prisma.user_activities.findFirst({
         where: {
           user_id: setup.user_id,
           section: setup.section,
           date: { gte: userToday, lt: userTomorrow },
-          did_user_do: true,
         },
       });
 
       if (alreadyLogged) {
-        this.logger.log(`[CRON] SKIP userId=${setup.user_id} section=${setup.section} — already logged today`);
+        this.logger.log(`[CRON] SKIP userId=${setup.user_id} section=${setup.section} — already logged today (did_user_do=${alreadyLogged.did_user_do})`);
         continue;
       }
 

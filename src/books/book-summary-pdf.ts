@@ -5,6 +5,10 @@ const PAGE = {
   height: 841.89,
 };
 
+const MARGIN = { top: 56, bottom: 64, left: 52, right: 52 };
+const CONTENT_WIDTH = PAGE.width - MARGIN.left - MARGIN.right;
+const MAX_Y = PAGE.height - MARGIN.bottom;
+
 const COLORS = {
   background: '#0f1014',
   title: '#f5f0e8',
@@ -31,13 +35,60 @@ export function buildSummaryPdfFilename(username: string, bookTitle: string): st
   return `${sanitize(username)}-${sanitize(bookTitle)}-summary.pdf`;
 }
 
+type Block =
+  | { kind: 'heading'; text: string }
+  | { kind: 'paragraph'; text: string };
+
+/**
+ * Turns the AI/markdown summary into clean, styled blocks. We strip markdown
+ * markers (###, **, *, -) so they never render literally in the PDF, and treat
+ * lines that look like headings (markdown # or short "Title:"-style lines) as
+ * section headings.
+ */
+function parseSummaryBlocks(summary: string): Block[] {
+  const blocks: Block[] = [];
+  const stripInline = (s: string) =>
+    s
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/__(.+?)__/g, '$1')
+      .replace(/[*_`]/g, '')
+      .trim();
+
+  const rawBlocks = summary
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  for (const raw of rawBlocks) {
+    const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+    for (const line of lines) {
+      const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
+      if (headingMatch) {
+        blocks.push({ kind: 'heading', text: stripInline(headingMatch[1]) });
+        continue;
+      }
+      // A standalone short bold line is also treated as a heading.
+      const boldOnly = line.match(/^\*\*(.+?)\*\*:?\s*$/);
+      if (boldOnly) {
+        blocks.push({ kind: 'heading', text: stripInline(boldOnly[1]) });
+        continue;
+      }
+      blocks.push({ kind: 'paragraph', text: stripInline(line) });
+    }
+  }
+
+  return blocks;
+}
+
 export function generateBookSummaryPdf(input: BookSummaryPdfInput): Promise<Buffer> {
   const { bookTitle, writerName, summary } = input;
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'A4',
-      margins: { top: 56, bottom: 56, left: 52, right: 52 },
+      margins: MARGIN,
+      bufferPages: true,
       info: {
         Title: `${bookTitle} — Reading Summary`,
         Author: writerName,
@@ -49,90 +100,127 @@ export function generateBookSummaryPdf(input: BookSummaryPdfInput): Promise<Buff
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const footerText = 'Generated from your reading reflections in Elevate.';
-    const drawFooter = () => {
-      doc
-        .fillColor(COLORS.muted)
-        .font('Helvetica')
-        .fontSize(9)
-        .text(footerText, 52, PAGE.height - 48, {
-          width: PAGE.width - 104,
-          align: 'center',
-          lineBreak: false,
-        });
+    const paintBackground = () => {
+      doc.save();
+      doc.rect(0, 0, PAGE.width, PAGE.height).fill(COLORS.background);
+      doc.restore();
     };
 
-    doc.on('pageAdded', () => {
-      doc.rect(0, 0, PAGE.width, PAGE.height).fill(COLORS.background);
-    });
+    doc.on('pageAdded', paintBackground);
+    paintBackground();
 
-    doc.rect(0, 0, PAGE.width, PAGE.height).fill(COLORS.background);
-
-    const contentWidth = PAGE.width - 104;
-    let y = 72;
+    // ── Header ──
+    let y = MARGIN.top + 16;
 
     doc
       .fillColor(COLORS.accent)
       .font('Helvetica-Bold')
       .fontSize(10)
-      .text('ELEVATE', 52, y, { characterSpacing: 2 });
+      .text('ELEVATE', MARGIN.left, y, { characterSpacing: 2 });
 
-    y += 36;
+    y += 34;
 
     doc
       .fillColor(COLORS.title)
       .font('Helvetica-Bold')
       .fontSize(28)
-      .text(bookTitle, 52, y, { width: contentWidth, lineGap: 4 });
+      .text(bookTitle, MARGIN.left, y, { width: CONTENT_WIDTH, lineGap: 4 });
 
-    y = doc.y + 18;
+    y = doc.y + 16;
 
     doc
-      .moveTo(52, y)
-      .lineTo(52 + 72, y)
+      .moveTo(MARGIN.left, y)
+      .lineTo(MARGIN.left + 72, y)
       .strokeColor(COLORS.accent)
       .lineWidth(2)
       .stroke();
 
-    y += 22;
+    y += 20;
 
     doc
       .fillColor(COLORS.muted)
       .font('Helvetica')
       .fontSize(11)
-      .text('Personal reading summary', 52, y);
+      .text('Personal reading summary', MARGIN.left, y);
 
-    y += 22;
+    y = doc.y + 6;
 
     doc
       .fillColor(COLORS.title)
       .font('Helvetica-Bold')
       .fontSize(13)
-      .text(`Written by ${writerName}`, 52, y);
+      .text(`Written by ${writerName}`, MARGIN.left, y);
 
-    y += 32;
+    y = doc.y + 18;
 
     doc
-      .moveTo(52, y)
-      .lineTo(PAGE.width - 52, y)
+      .moveTo(MARGIN.left, y)
+      .lineTo(PAGE.width - MARGIN.right, y)
       .strokeColor(COLORS.divider)
       .lineWidth(1)
       .stroke();
 
-    y += 28;
+    y += 26;
+    doc.y = y;
 
-    doc
-      .fillColor(COLORS.body)
-      .font('Helvetica')
-      .fontSize(12)
-      .text(summary.trim(), 52, y, {
-        width: contentWidth,
-        align: 'left',
-        lineGap: 7,
-      });
+    // ── Body ──
+    const blocks = parseSummaryBlocks(summary);
 
-    drawFooter();
+    const ensureSpace = (needed: number) => {
+      if (doc.y + needed > MAX_Y) {
+        doc.addPage();
+        doc.y = MARGIN.top;
+      }
+    };
 
+    blocks.forEach((block, idx) => {
+      if (block.kind === 'heading') {
+        // Keep a heading from being orphaned at the very bottom of a page.
+        ensureSpace(60);
+        if (idx > 0) doc.y += 8;
+        doc
+          .fillColor(COLORS.accent)
+          .font('Helvetica-Bold')
+          .fontSize(15)
+          .text(block.text, MARGIN.left, doc.y, { width: CONTENT_WIDTH, lineGap: 2 });
+        doc.y += 8;
+      } else {
+        ensureSpace(28);
+        doc
+          .fillColor(COLORS.body)
+          .font('Helvetica')
+          .fontSize(12)
+          .text(block.text, MARGIN.left, doc.y, {
+            width: CONTENT_WIDTH,
+            align: 'left',
+            lineGap: 6,
+          });
+        doc.y += 10;
+      }
+    });
+
+    // ── Footer on every page (drawn after layout so it never adds pages) ──
+    const footerText = 'Generated from your reading reflections in Elevate.';
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      // Temporarily drop the bottom margin so writing into the footer zone does
+      // not make PDFKit auto-insert a blank page.
+      const prevBottom = doc.page.margins.bottom;
+      doc.page.margins.bottom = 0;
+      doc
+        .fillColor(COLORS.muted)
+        .font('Helvetica')
+        .fontSize(9)
+        .text(footerText, MARGIN.left, PAGE.height - 40, {
+          width: CONTENT_WIDTH,
+          align: 'center',
+          lineBreak: false,
+        });
+      doc.page.margins.bottom = prevBottom;
+    }
+
+    doc.flushPages();
     doc.end();
   });
 }
